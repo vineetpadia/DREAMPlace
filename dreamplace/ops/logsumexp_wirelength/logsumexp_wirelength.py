@@ -96,10 +96,11 @@ class LogSumExpWirelengthMergedFunction(Function):
         ctx.gamma = gamma
         ctx.grad_intermediate = output[1]
         ctx.pos = pos
-        if pos.is_cuda:
-            torch.cuda.synchronize()
-        logger.debug("wirelength forward %.3f ms" %
-                     ((time.time() - tt) * 1000))
+        if logger.isEnabledFor(logging.DEBUG):
+            if pos.is_cuda:
+                torch.cuda.synchronize()
+            logger.debug("wirelength forward %.3f ms" %
+                         ((time.time() - tt) * 1000))
         return output[0]
 
     @staticmethod
@@ -114,10 +115,11 @@ class LogSumExpWirelengthMergedFunction(Function):
                       ctx.net_weights, ctx.net_mask, ctx.gamma)
         output[:int(output.numel() // 2)].masked_fill_(ctx.pin_mask, 0.0)
         output[int(output.numel() // 2):].masked_fill_(ctx.pin_mask, 0.0)
-        if grad_pos.is_cuda:
-            torch.cuda.synchronize()
-        logger.debug("wirelength backward %.3f ms" %
-                     ((time.time() - tt) * 1000))
+        if logger.isEnabledFor(logging.DEBUG):
+            if grad_pos.is_cuda:
+                torch.cuda.synchronize()
+            logger.debug("wirelength backward %.3f ms" %
+                         ((time.time() - tt) * 1000))
         return output, None, None, None, None, None, None, None
 
 

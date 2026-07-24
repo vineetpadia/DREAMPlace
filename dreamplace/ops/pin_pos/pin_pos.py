@@ -79,9 +79,9 @@ class PinPosSegmentFunction(Function):
         ctx.flat_node2pin_start_map = flat_node2pin_start_map
         ctx.num_physical_nodes = num_physical_nodes
 
-        if pos.is_cuda:
-            torch.cuda.synchronize()
-
+        # No barrier here: the result is consumed on the same stream, so ordering is
+        # already guaranteed. (Unlike the wirelength/density ops, this one had no timing
+        # log to make accurate, so the synchronize() was pure overhead.)
         return output
 
     @staticmethod
@@ -94,9 +94,6 @@ class PinPosSegmentFunction(Function):
                 ctx.flat_node2pin_start_map, ctx.num_physical_nodes)
         else:
             assert 0, "CPU version NOT implemented"
-        if grad_pin_pos.is_cuda:
-            torch.cuda.synchronize()
-
         return output, None, None, None, None, None, None
 
 

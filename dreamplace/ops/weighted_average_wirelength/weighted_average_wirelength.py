@@ -63,10 +63,13 @@ class WeightedAverageWirelengthFunction(Function):
         ctx.xyexp_xy_sum = output[5]
         ctx.xyexp_nxy_sum = output[6]
 
-        if pos.is_cuda:
-            torch.cuda.synchronize()
-        logger.debug("wirelength forward %.3f ms" %
-                     ((time.time() - tt) * 1000))
+        # The synchronize() exists only to make the timing below accurate. Gate it on the
+        # log level so a normal run does not pay a device-wide barrier per iteration.
+        if logger.isEnabledFor(logging.DEBUG):
+            if pos.is_cuda:
+                torch.cuda.synchronize()
+            logger.debug("wirelength forward %.3f ms" %
+                         ((time.time() - tt) * 1000))
         return output[0]
 
     @staticmethod
@@ -84,10 +87,11 @@ class WeightedAverageWirelengthFunction(Function):
                       ctx.net_mask, ctx.inv_gamma)
         output[:output.numel() // 2].masked_fill_(ctx.pin_mask, 0.0)
         output[output.numel() // 2:].masked_fill_(ctx.pin_mask, 0.0)
-        if grad_pos.is_cuda:
-            torch.cuda.synchronize()
-        logger.debug("wirelength backward %.3f ms" %
-                     ((time.time() - tt) * 1000))
+        if logger.isEnabledFor(logging.DEBUG):
+            if grad_pos.is_cuda:
+                torch.cuda.synchronize()
+            logger.debug("wirelength backward %.3f ms" %
+                         ((time.time() - tt) * 1000))
         return output, None, None, None, None, None, None, None
 
 
@@ -129,10 +133,13 @@ class WeightedAverageWirelengthAtomicFunction(Function):
         ctx.pos = pos
         #if torch.isnan(ctx.exp_xy).any() or torch.isnan(ctx.exp_nxy).any() or torch.isnan(ctx.exp_xy_sum).any() or torch.isnan(ctx.exp_nxy_sum).any() or torch.isnan(output[0]).any():
         #    pdb.set_trace()
-        if pos.is_cuda:
-            torch.cuda.synchronize()
-        logger.debug("wirelength forward %.3f ms" %
-                     ((time.time() - tt) * 1000))
+        # The synchronize() exists only to make the timing below accurate. Gate it on the
+        # log level so a normal run does not pay a device-wide barrier per iteration.
+        if logger.isEnabledFor(logging.DEBUG):
+            if pos.is_cuda:
+                torch.cuda.synchronize()
+            logger.debug("wirelength forward %.3f ms" %
+                         ((time.time() - tt) * 1000))
         return output[0]
 
     @staticmethod
@@ -150,10 +157,11 @@ class WeightedAverageWirelengthAtomicFunction(Function):
                       ctx.net_mask, ctx.inv_gamma)
         output[:int(output.numel() // 2)].masked_fill_(ctx.pin_mask, 0.0)
         output[int(output.numel() // 2):].masked_fill_(ctx.pin_mask, 0.0)
-        if grad_pos.is_cuda:
-            torch.cuda.synchronize()
-        logger.debug("wirelength backward %.3f ms" %
-                     ((time.time() - tt) * 1000))
+        if logger.isEnabledFor(logging.DEBUG):
+            if grad_pos.is_cuda:
+                torch.cuda.synchronize()
+            logger.debug("wirelength backward %.3f ms" %
+                         ((time.time() - tt) * 1000))
         return output, None, None, None, None, None, None, None
 
 
@@ -188,10 +196,13 @@ class WeightedAverageWirelengthMergedFunction(Function):
         ctx.inv_gamma = inv_gamma
         ctx.grad_intermediate = output[1]
         ctx.pos = pos
-        if pos.is_cuda:
-            torch.cuda.synchronize()
-        logger.debug("wirelength forward %.3f ms" %
-                     ((time.time() - tt) * 1000))
+        # The synchronize() exists only to make the timing below accurate. Gate it on the
+        # log level so a normal run does not pay a device-wide barrier per iteration.
+        if logger.isEnabledFor(logging.DEBUG):
+            if pos.is_cuda:
+                torch.cuda.synchronize()
+            logger.debug("wirelength forward %.3f ms" %
+                         ((time.time() - tt) * 1000))
         return output[0]
 
     @staticmethod
@@ -206,10 +217,11 @@ class WeightedAverageWirelengthMergedFunction(Function):
                       ctx.net_weights, ctx.net_mask, ctx.inv_gamma)
         output[:int(output.numel() // 2)].masked_fill_(ctx.pin_mask, 0.0)
         output[int(output.numel() // 2):].masked_fill_(ctx.pin_mask, 0.0)
-        if grad_pos.is_cuda:
-            torch.cuda.synchronize()
-        logger.debug("wirelength backward %.3f ms" %
-                     ((time.time() - tt) * 1000))
+        if logger.isEnabledFor(logging.DEBUG):
+            if grad_pos.is_cuda:
+                torch.cuda.synchronize()
+            logger.debug("wirelength backward %.3f ms" %
+                         ((time.time() - tt) * 1000))
         return output, None, None, None, None, None, None, None
 
 

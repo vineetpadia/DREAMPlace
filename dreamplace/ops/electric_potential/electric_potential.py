@@ -211,9 +211,10 @@ class ElectricPotentialFunction(Function):
         #    plot(plot_count, ctx.field_map_y.clone().cpu().numpy(), padding, "summary/%d.field_map_y" % (plot_count))
         #plot_count += 1
 
-        if pos.is_cuda:
-            torch.cuda.synchronize()
-        logger.debug("density forward %.3f ms" % ((time.time() - tt) * 1000))
+        if logger.isEnabledFor(logging.DEBUG):
+            if pos.is_cuda:
+                torch.cuda.synchronize()
+            logger.debug("density forward %.3f ms" % ((time.time() - tt) * 1000))
         return energy
 
     @staticmethod
@@ -259,9 +260,10 @@ class ElectricPotentialFunction(Function):
         #pgrad = np.concatenate([np.array(pgradx), np.array(pgrady)])
 
         #output = torch.empty_like(ctx.pos).uniform_(0.0, 0.1)
-        if grad_pos.is_cuda:
-            torch.cuda.synchronize()
-        logger.debug("density backward %.3f ms" % ((time.time() - tt) * 1000))
+        if logger.isEnabledFor(logging.DEBUG):
+            if grad_pos.is_cuda:
+                torch.cuda.synchronize()
+            logger.debug("density backward %.3f ms" % ((time.time() - tt) * 1000))
         return output, \
             None, None, None, None, \
             None, None, None, None, \
