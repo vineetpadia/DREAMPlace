@@ -204,9 +204,18 @@ __global__ void compute_instance_net_boxes(DetailedPlaceDBType db,
   }
   __syncthreads();
 
-  for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < group_size;
-       i += blockDim.x * gridDim.x) {
-    int inst_id = i;
+  // Net boxes are independent; assign one thread to each instance-net
+  // instead of scanning every net of an instance serially.
+  int max_num_instance_nets = group_size * MAX_NUM_NETS_PER_INSTANCE;
+  for (int i = blockIdx.x * blockDim.x + threadIdx.x;
+       i < max_num_instance_nets; i += blockDim.x * gridDim.x) {
+    int inst_id = i / MAX_NUM_NETS_PER_INSTANCE;
+    int instance_net_id = i - inst_id * MAX_NUM_NETS_PER_INSTANCE;
+    auto instance_nets_size = state.instance_nets_size[inst_id];
+    if (instance_net_id >= instance_nets_size) {
+      continue;
+    }
+
     // this is a copy
     auto inst = state.reorder_instances(group_id, inst_id);
     inst.idx_bgn += offset;
@@ -230,44 +239,39 @@ __global__ void compute_instance_net_boxes(DetailedPlaceDBType db,
       T segment_xl = db.x[row2nodes[0]];
       T segment_xh = db.x[row2nodes[K - 1]];
       T row_yl = db.yl + inst.row_id * db.row_height;
-      auto instance_nets =
-          state.instance_nets + inst_id * MAX_NUM_NETS_PER_INSTANCE;
-      auto instance_nets_size = state.instance_nets_size[inst_id];
-      for (int idx = 0; idx < instance_nets_size; ++idx) {
-        auto& instance_net = instance_nets[idx];
-        instance_net.bxl = db.xh;
-        instance_net.bxh = db.xl;
+      auto& instance_net = state.instance_nets[i];
+      instance_net.bxl = db.xh;
+      instance_net.bxh = db.xl;
 
-        int net2pin_id = db.flat_net2pin_start_map[instance_net.net_id];
-        const int net2pin_id_end =
-            db.flat_net2pin_start_map[instance_net.net_id + 1];
-        for (; net2pin_id < net2pin_id_end; ++net2pin_id) {
-          int net_pin_id = db.flat_net2pin_map[net2pin_id];
-          int other_node_id = db.pin2node_map[net_pin_id];
-          if (other_node_id < db.num_nodes)  // other_node_id may exceed
-                                             // db.num_nodes like IO pins
+      int net2pin_id = db.flat_net2pin_start_map[instance_net.net_id];
+      const int net2pin_id_end =
+          db.flat_net2pin_start_map[instance_net.net_id + 1];
+      for (; net2pin_id < net2pin_id_end; ++net2pin_id) {
+        int net_pin_id = db.flat_net2pin_map[net2pin_id];
+        int other_node_id = db.pin2node_map[net_pin_id];
+        if (other_node_id < db.num_nodes)  // other_node_id may exceed
+                                           // db.num_nodes like IO pins
+        {
+          int other_node_found =
+              (state.node2inst_map[other_node_id] == inst_id);
+          if (!other_node_found)  // not found
           {
-            int other_node_found =
-                (state.node2inst_map[other_node_id] == inst_id);
-            if (!other_node_found)  // not found
+            T other_node_xl = db.x[other_node_id];
+            auto pin_offset_x = db.pin_offset_x[net_pin_id];
+            if (abs(db.y[other_node_id] - row_yl) <
+                db.row_height)  // in the same row
             {
-              T other_node_xl = db.x[other_node_id];
-              auto pin_offset_x = db.pin_offset_x[net_pin_id];
-              if (abs(db.y[other_node_id] - row_yl) <
-                  db.row_height)  // in the same row
+              if (other_node_xl < segment_xl)  // left of the segment
               {
-                if (other_node_xl < segment_xl)  // left of the segment
-                {
-                  other_node_xl = db.xl;
-                } else if (other_node_xl > segment_xh)  // right of the segment
-                {
-                  other_node_xl = db.xh;
-                }
+                other_node_xl = db.xl;
+              } else if (other_node_xl > segment_xh)  // right of the segment
+              {
+                other_node_xl = db.xh;
               }
-              other_node_xl += pin_offset_x;
-              instance_net.bxl = min(instance_net.bxl, other_node_xl);
-              instance_net.bxh = max(instance_net.bxh, other_node_xl);
             }
+            other_node_xl += pin_offset_x;
+            instance_net.bxl = min(instance_net.bxl, other_node_xl);
+            instance_net.bxh = max(instance_net.bxh, other_node_xl);
           }
         }
       }
@@ -922,7 +926,8 @@ void k_reorder(
                                                                 group_id);
         // print_instance_nets<<<1, 1>>>(state, group_id, offset);
         // check_instance_nets<<<1, 1>>>(db, state, group_id);
-        compute_instance_net_boxes<<<ceilDiv(group_size, 256), 256>>>(
+        compute_instance_net_boxes<<<
+            ceilDiv(group_size * MAX_NUM_NETS_PER_INSTANCE, 256), 256>>>(
             db, state, group_id, offset);
         // print_instance_net_bboxes<<<1, 1>>>(state, group_id, offset);
         compute_reorder_hpwl<<<ceilDiv(group_size, 256), 256>>>(
