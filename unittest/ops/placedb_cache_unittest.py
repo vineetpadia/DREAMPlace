@@ -22,6 +22,30 @@ sys.path.pop()
 
 
 class PlaceDBCacheTest(unittest.TestCase):
+    def test_derived_compatibility_maps_are_lazy(self):
+        db = PlaceDB.PlaceDB()
+        db.node_names = np.asarray([b"node0", b"node1"])
+        db.net_names = np.asarray([b"net0", b"net1"])
+        db.flat_node2pin_map = np.asarray([0, 2, 1], dtype=np.int32)
+        db.flat_node2pin_start_map = np.asarray([0, 2, 3], dtype=np.int32)
+        db.flat_net2pin_map = np.asarray([1, 0, 2], dtype=np.int32)
+        db.flat_net2pin_start_map = np.asarray([0, 1, 3], dtype=np.int32)
+        db._node_name2id_map = None
+        db._net_name2id_map = None
+
+        self.assertEqual(db.num_nets, 2)
+        self.assertIsNone(db._node_name2id_map)
+        self.assertIsNone(db._net_name2id_map)
+        self.assertIsNone(db._node2pin_map)
+        self.assertIsNone(db._net2pin_map)
+
+        self.assertEqual(db.node_name2id_map, {"node0": 0, "node1": 1})
+        self.assertEqual(db.net_name2id_map, {"net0": 0, "net1": 1})
+        np.testing.assert_array_equal(db.node2pin_map[0], [0, 2])
+        np.testing.assert_array_equal(db.node2pin_map[1], [1])
+        np.testing.assert_array_equal(db.net2pin_map[0], [1])
+        np.testing.assert_array_equal(db.net2pin_map[1], [0, 2])
+
     def test_safe_cache_codec_round_trip(self):
         value = {
             "array": np.arange(6, dtype=np.float32).reshape(2, 3),

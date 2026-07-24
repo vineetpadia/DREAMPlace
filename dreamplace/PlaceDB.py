@@ -86,7 +86,7 @@ class PlaceDB (object):
         self.num_physical_nodes = 0 # number of real nodes, including movable nodes, terminals, and terminal_NIs
         self.num_terminals = 0 # number of terminals, essentially fixed macros
         self.num_terminal_NIs = 0 # number of terminal_NIs that can be overlapped, essentially IO pins
-        self.node_name2id_map = {} # node name to id map, cell name
+        self._node_name2id_map = {} # node name to id map, cell name
         self.node_names = None # 1D array, cell name
         self.node_x = None # 1D array, cell position x
         self.node_y = None # 1D array, cell position y
@@ -101,15 +101,15 @@ class PlaceDB (object):
         self.pin_offset_x = None # 1D array, pin offset x to its node
         self.pin_offset_y = None # 1D array, pin offset y to its node
 
-        self.net_name2id_map = {} # net name to id map
+        self._net_name2id_map = {} # net name to id map
         self.net_names = None # net name
         self.net_weights = None # weights for each net
 
-        self.net2pin_map = None # array of 1D array, each row stores pin id
+        self._net2pin_map = None # array of 1D array, each row stores pin id
         self.flat_net2pin_map = None # flatten version of net2pin_map
         self.flat_net2pin_start_map = None # starting index of each net in flat_net2pin_map
 
-        self.node2pin_map = None # array of 1D array, contains pin id of each node
+        self._node2pin_map = None # array of 1D array, contains pin id of each node
         self.flat_node2pin_map = None # flatten version of node2pin_map
         self.flat_node2pin_start_map = None # starting index of each node in flat_node2pin_map
 
@@ -193,6 +193,68 @@ class PlaceDB (object):
     @rawdb.setter
     def rawdb(self, value):
         self._rawdb = value
+
+    @property
+    def node_name2id_map(self):
+        """Return the node-name lookup, rebuilding cached derived state lazily."""
+        if self._node_name2id_map is None:
+            self._node_name2id_map = {
+                name.decode(): node_id
+                for node_id, name in enumerate(self.node_names)
+            }
+        return self._node_name2id_map
+
+    @node_name2id_map.setter
+    def node_name2id_map(self, value):
+        self._node_name2id_map = value
+
+    @property
+    def net_name2id_map(self):
+        """Return the net-name lookup, rebuilding cached derived state lazily."""
+        if self._net_name2id_map is None:
+            self._net_name2id_map = {
+                name.decode(): net_id
+                for net_id, name in enumerate(self.net_names)
+            }
+        return self._net_name2id_map
+
+    @net_name2id_map.setter
+    def net_name2id_map(self, value):
+        self._net_name2id_map = value
+
+    @property
+    def node2pin_map(self):
+        """Return the nested node-pin map, rebuilding it from CSR lazily."""
+        if (
+            self._node2pin_map is None
+            and self.flat_node2pin_map is not None
+            and self.flat_node2pin_start_map is not None
+        ):
+            self._node2pin_map = self._expand_pin_map(
+                self.flat_node2pin_map, self.flat_node2pin_start_map
+            )
+        return self._node2pin_map
+
+    @node2pin_map.setter
+    def node2pin_map(self, value):
+        self._node2pin_map = value
+
+    @property
+    def net2pin_map(self):
+        """Return the nested net-pin map, rebuilding it from CSR lazily."""
+        if (
+            self._net2pin_map is None
+            and self.flat_net2pin_map is not None
+            and self.flat_net2pin_start_map is not None
+        ):
+            self._net2pin_map = self._expand_pin_map(
+                self.flat_net2pin_map, self.flat_net2pin_start_map
+            )
+        return self._net2pin_map
+
+    @net2pin_map.setter
+    def net2pin_map(self, value):
+        self._net2pin_map = value
 
     def _start_background_rawdb_read(self, params):
         """Parse the C++ database while cached Python state starts placement."""
@@ -432,12 +494,13 @@ class PlaceDB (object):
                 )
 
             self.__dict__.update(state)
-            self.node2pin_map = self._expand_pin_map(
-                self.flat_node2pin_map, self.flat_node2pin_start_map
-            )
-            self.net2pin_map = self._expand_pin_map(
-                self.flat_net2pin_map, self.flat_net2pin_start_map
-            )
+            # These public compatibility views are derivable from compact
+            # arrays and are unused by the normal placement path. Build them
+            # only if a caller asks for them.
+            self._node_name2id_map = None
+            self._net_name2id_map = None
+            self._node2pin_map = None
+            self._net2pin_map = None
             self.pydb = None
             self.device = torch.device("cuda" if params.gpu else "cpu")
             for name, value in param_updates.items():
@@ -663,7 +726,7 @@ class PlaceDB (object):
         """
         @return number of nets
         """
-        return len(self.net2pin_map)
+        return len(self.flat_net2pin_start_map) - 1
 
     @property
     def num_pins(self):

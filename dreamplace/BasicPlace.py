@@ -164,8 +164,9 @@ class PlaceDataCollection(object):
 
             # number of pins for each node
             num_pins_in_nodes = np.zeros(placedb.num_nodes)
-            for i in range(placedb.num_physical_nodes):
-                num_pins_in_nodes[i] = len(placedb.node2pin_map[i])
+            num_pins_in_nodes[:placedb.num_physical_nodes] = np.diff(
+                placedb.flat_node2pin_start_map
+            )
             self.num_pins_in_nodes = torch.tensor(num_pins_in_nodes,
                                                   dtype=self.pos[0].dtype,
                                                   device=device)
