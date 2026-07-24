@@ -80,7 +80,7 @@ class LogSumExpWirelengthOpTest(unittest.TestCase):
         pin_pos = np.array(
             [[0.0, 0.0], [1.0, 2.0], [1.5, 0.2], [0.5, 3.1], [0.6, 1.1]],
             dtype=np.float32) * 10
-        net2pin_map = np.array([np.array([0, 4]), np.array([1, 2, 3])])
+        net2pin_map = np.array([np.array([0, 4]), np.array([1, 2, 3])], dtype=object)
         pin2net_map = np.zeros(len(pin_pos), dtype=np.int32)
         for net_id, pins in enumerate(net2pin_map):
             for pin in pins:
@@ -91,7 +91,8 @@ class LogSumExpWirelengthOpTest(unittest.TestCase):
         pin_y = pin_pos[:, 1]
         gamma = torch.tensor(0.5, dtype=torch.float32)
         ignore_net_degree = 4
-        pin_mask = np.zeros(len(pin2net_map), dtype=np.uint8)
+        # pin_mask feeds masked_fill_, which requires bool since torch 1.2; net_mask stays uint8.
+        pin_mask = np.zeros(len(pin2net_map), dtype=bool)
 
         # net mask
         net_mask = np.ones(len(net2pin_map), dtype=np.uint8)
