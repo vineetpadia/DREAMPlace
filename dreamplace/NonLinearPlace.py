@@ -491,6 +491,14 @@ class NonLinearPlace(BasicPlace.BasicPlace):
                         if params.timer_engine != "heterosta" and self.device != torch.device("cpu"):
                             self.data_collections.net_weights.copy_(
                                 torch.from_numpy(placedb.net_weights))
+
+                        # Net weights just changed, so the memoized pin-weight sums used by
+                        # the preconditioner are stale. The heterosta path in particular
+                        # writes them in place via raw pointers, which does not bump the
+                        # tensor version, so invalidate explicitly rather than relying on it.
+                        pws_op = getattr(self.op_collections, "pws_op", None)
+                        if pws_op is not None and hasattr(pws_op, "invalidate"):
+                            pws_op.invalidate()
                         logging.info("net-weight update step %.3f ms" % \
                             ((time.time() - beg) * 1000))
                         logging.info("The entire timing step %.3f ms"% \
