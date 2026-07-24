@@ -92,7 +92,7 @@ class NesterovAcceleratedGradientOptimizer(Optimizer):
                 if not group['a_k']:
                     group['a_k'].append(torch.ones(1, dtype=g_k.dtype, device=g_k.device))
                     group['v_k_1'].append(torch.autograd.Variable(torch.zeros_like(v_k), requires_grad=True))
-                    group['v_k_1'][i].data.copy_(group['v_k'][i]-group['lr']*g_k)
+                    group['v_k_1'][i].data.copy_(group['v_k'][i].data-group['lr']*g_k)
                     obj, grad = obj_and_grad_fn(group['v_k_1'][i])
                     group['g_k_1'].append(grad.data)
                     group['obj_k_1'].append(obj.data.clone())
@@ -101,7 +101,7 @@ class NesterovAcceleratedGradientOptimizer(Optimizer):
                 g_k_1 = group['g_k_1'][i]
                 obj_k_1 = group['obj_k_1'][i]
                 if not group['alpha_k']:
-                    group['alpha_k'].append((v_k-v_k_1).norm(p=2) / (g_k-g_k_1).norm(p=2))
+                    group['alpha_k'].append((v_k.data-v_k_1.data).norm(p=2) / (g_k-g_k_1).norm(p=2))
                 alpha_k = group['alpha_k'][i]
 
                 if group['v_kp1'][i] is None:
@@ -118,7 +118,10 @@ class NesterovAcceleratedGradientOptimizer(Optimizer):
                 #ttt = time.time()
                 while True:
                     #with torch.autograd.profiler.profile(use_cuda=True) as prof:
-                    u_kp1 = v_k - alpha_k*g_k
+                    # Optimizer state updates are not part of the objective's
+                    # autograd graph. Using the value view avoids constructing
+                    # and immediately discarding a graph every iteration.
+                    u_kp1 = v_k.data - alpha_k*g_k
                     #constraint_fn(u_kp1)
                     v_kp1.data.copy_(u_kp1 + coef*(u_kp1-u_k))
                     # make sure v_kp1 subjects to constraints
