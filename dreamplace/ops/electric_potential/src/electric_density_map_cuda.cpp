@@ -86,7 +86,13 @@ at::Tensor density_map(
   at::Tensor density_map = initial_density_map.clone();
   int num_nodes = pos.numel() / 2;
 
-  // Call the cuda kernel launcher
+  // Call the cuda kernel launcher.
+  // Guarded like the filler pass below: with num_movable_nodes == 0 the launcher would
+  // still run its deterministic scale/unscale round trip over the whole map, which is
+  // both wasted work and lossy (float -> fixed point -> float truncates). Callers that
+  // want only the filler contribution on top of an existing map rely on this being a
+  // true no-op.
+  if (num_movable_nodes) {
   DREAMPLACE_DISPATCH_FLOATING_TYPES(
       pos, "computeTriangleDensityMapCudaLauncher", [&] {
         computeTriangleDensityMapCudaLauncher<scalar_t>(
@@ -105,6 +111,7 @@ at::Tensor density_map(
             DREAMPLACE_TENSOR_DATA_PTR(density_map, scalar_t),
             DREAMPLACE_TENSOR_DATA_PTR(sorted_node_map, int));
       });
+  }
 
   if (num_filler_nodes) {
     int num_physical_nodes = num_nodes - num_filler_nodes;
