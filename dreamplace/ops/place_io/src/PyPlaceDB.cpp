@@ -179,13 +179,13 @@ void PyPlaceDB::set(PlaceDB const& db)
         int id = node_names.size();
         node_name2id_map[pybind11::str(name)] = id;
         node_names.append(pybind11::str(name));
-        node_x.append(box.xl());
-        node_y.append(box.yl());
+        node_x.push_back(box.xl());
+        node_y.push_back(box.yl());
         node_orient.append(pybind11::str(std::string(orient)));
-        node_size_x.append(box.width());
-        node_size_y.append(box.height());
+        node_size_x.push_back(box.width());
+        node_size_y.push_back(box.height());
         // map new node to original index
-        node2orig_node_map.append(node.id());
+        node2orig_node_map.push_back(node.id());
         // record original node to new node mapping
         mNode2NewNodes.at(node.id()).push_back(id);
         //if (dist2map)
@@ -324,18 +324,18 @@ void PyPlaceDB::set(PlaceDB const& db)
                 for (auto pin_id : node.pins())
                 {
                     pins.append(pin_id);
-                    flat_node2pin_map.append(pin_id);
+                    flat_node2pin_map.push_back(pin_id);
                 }
             }
             node2pin_map.append(pins);
-            flat_node2pin_start_map.append(count);
+            flat_node2pin_start_map.push_back(count);
             if (j == 0) // for fixed macros with multiple boxes, put all pins to the first one
             {
                 count += node.pins().size();
             }
         }
     }
-    flat_node2pin_start_map.append(count);
+    flat_node2pin_start_map.push_back(count);
 
     num_movable_pins = 0;
     for (unsigned int i = 0, ie = db.pins().size(); i < ie; ++i)
@@ -348,10 +348,10 @@ void PyPlaceDB::set(PlaceDB const& db)
         // for fixed macros with multiple boxes, put all pins to the first one
         PlaceDB::index_type new_node_id = mNode2NewNodes.at(node.id()).at(0);
         Pin::point_type pin_pos (node.pinPos(pin));
-        pin_offset_x.append(pin_pos.x() - node_x[new_node_id].cast<PlaceDB::coordinate_type>());
-        pin_offset_y.append(pin_pos.y() - node_y[new_node_id].cast<PlaceDB::coordinate_type>());
-        pin2node_map.append(new_node_id);
-        pin2net_map.append(db.getNet(pin).id());
+        pin_offset_x.push_back(pin_pos.x() - node_x[new_node_id]);
+        pin_offset_y.push_back(pin_pos.y() - node_y[new_node_id]);
+        pin2node_map.push_back(new_node_id);
+        pin2net_map.push_back(db.getNet(pin).id());
 
         if (node.status() != PlaceStatusEnum::FIXED /*&& node.status() != PlaceStatusEnum::DUMMY_FIXED*/)
         {
@@ -362,10 +362,10 @@ void PyPlaceDB::set(PlaceDB const& db)
     for (unsigned int i = 0, ie = db.nets().size(); i < ie; ++i)
     {
         Net const& net = db.net(i);
-        net_weights.append(net.weight());
-        net_weight_deltas.append(0.);
-        net_criticality.append(0.);
-        net_criticality_deltas.append(0.);
+        net_weights.push_back(net.weight());
+        net_weight_deltas.push_back(0.);
+        net_criticality.push_back(0.);
+        net_criticality_deltas.push_back(0.);
         net_name2id_map[pybind11::str(db.netName(net))] = net.id();
         net_names.append(pybind11::str(db.netName(net)));
         pybind11::list pins;
@@ -377,12 +377,12 @@ void PyPlaceDB::set(PlaceDB const& db)
 
         for (std::vector<Net::index_type>::const_iterator it = net.pins().begin(), ite = net.pins().end(); it != ite; ++it)
         {
-            flat_net2pin_map.append(*it);
+            flat_net2pin_map.push_back(*it);
         }
-        flat_net2pin_start_map.append(count);
+        flat_net2pin_start_map.push_back(count);
         count += net.pins().size();
     }
-    flat_net2pin_start_map.append(count);
+    flat_net2pin_start_map.push_back(count);
 
     for (std::vector<Row>::const_iterator it = db.rows().begin(), ite = db.rows().end(); it != ite; ++it)
     {
@@ -692,7 +692,7 @@ void PyPlaceDB::convertOrient()
       bool flip = (dst_degree_flip.second != src_degree_flip.second); 
 
       // apply rotation to get new width and height 
-      std::pair<coordinate_type, coordinate_type> sizes = getRotatedSizes(rot_degree, node_size_x[node_id].cast<coordinate_type>(), node_size_y[node_id].cast<coordinate_type>()); 
+      std::pair<coordinate_type, coordinate_type> sizes = getRotatedSizes(rot_degree, node_size_x[node_id], node_size_y[node_id]); 
 
       pybind11::list pins = node2pin_map[node_id].cast<pybind11::list>();
       for (unsigned int j = 0; j < pins.size(); ++j)
@@ -701,7 +701,7 @@ void PyPlaceDB::convertOrient()
 
         // apply rotations to get new pin offsets 
         std::pair<coordinate_type, coordinate_type> pin_offsets = getRotatedPinOffsets(rot_degree, 
-            node_size_x[node_id].cast<coordinate_type>(), node_size_y[node_id].cast<coordinate_type>(), pin_offset_x[pin_id].cast<coordinate_type>(), pin_offset_y[pin_id].cast<coordinate_type>()); 
+            node_size_x[node_id], node_size_y[node_id], pin_offset_x[pin_id], pin_offset_y[pin_id]); 
 
         // apply changes 
         pin_offset_x[pin_id] = pin_offsets.first; 
@@ -722,7 +722,7 @@ void PyPlaceDB::convertOrient()
 
           // apply rotations to get new pin offsets 
           std::pair<coordinate_type, coordinate_type> pin_offsets = getFlipYPinOffsets(
-              node_size_x[node_id].cast<coordinate_type>(), node_size_y[node_id].cast<coordinate_type>(), pin_offset_x[pin_id].cast<coordinate_type>(), pin_offset_y[pin_id].cast<coordinate_type>()); 
+              node_size_x[node_id], node_size_y[node_id], pin_offset_x[pin_id], pin_offset_y[pin_id]); 
 
           // apply changes 
           pin_offset_x[pin_id] = pin_offsets.first; 
@@ -746,8 +746,8 @@ void PyPlaceDB::computeAreaStatistics()
 
   for (index_type i = num_nodes - num_terminals - num_terminal_NIs; i < num_nodes - num_terminal_NIs; ++i)
   {
-    total_fixed_node_area += node_size_x[i].cast<double>() * node_size_y[i].cast<double>(); 
-    fixed_boxes.emplace_back(node_x[i].cast<coordinate_type>(), node_y[i].cast<coordinate_type>(), node_x[i].cast<coordinate_type>() + node_size_x[i].cast<coordinate_type>(), node_y[i].cast<coordinate_type>() + node_size_y[i].cast<coordinate_type>());
+    total_fixed_node_area += (double)node_size_x[i] * (double)node_size_y[i]; 
+    fixed_boxes.emplace_back(node_x[i], node_y[i], node_x[i] + node_size_x[i], node_y[i] + node_size_y[i]);
   }
 
   // this is different from simply summing up the area of all fixed nodes

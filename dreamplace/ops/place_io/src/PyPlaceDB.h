@@ -36,37 +36,37 @@ struct PyPlaceDB
     unsigned int num_terminal_NIs; ///< number of terminal_NIs, essentially IO pins 
     pybind11::dict node_name2id_map; ///< node name to id map, cell name 
     pybind11::list node_names; ///< 1D array, cell name 
-    pybind11::list node_x; ///< 1D array, cell position x 
-    pybind11::list node_y; ///< 1D array, cell position y 
+    std::vector<coordinate_type> node_x; ///< 1D array, cell position x 
+    std::vector<coordinate_type> node_y; ///< 1D array, cell position y 
     pybind11::list node_orient; ///< 1D array, cell orientation 
-    pybind11::list node_size_x; ///< 1D array, cell width  
-    pybind11::list node_size_y; ///< 1D array, cell height
+    std::vector<coordinate_type> node_size_x; ///< 1D array, cell width  
+    std::vector<coordinate_type> node_size_y; ///< 1D array, cell height
 
-    pybind11::list node2orig_node_map; ///< due to some fixed nodes may have non-rectangular shapes, we flat the node list; 
+    std::vector<index_type> node2orig_node_map; ///< due to some fixed nodes may have non-rectangular shapes, we flat the node list; 
                                         ///< this map maps the new indices back to the original ones 
 
     pybind11::list pin_direct; ///< 1D array, pin direction IO 
-    pybind11::list pin_offset_x; ///< 1D array, pin offset x to its node 
-    pybind11::list pin_offset_y; ///< 1D array, pin offset y to its node 
+    std::vector<coordinate_type> pin_offset_x; ///< 1D array, pin offset x to its node 
+    std::vector<coordinate_type> pin_offset_y; ///< 1D array, pin offset y to its node 
     pybind11::list pin_names; ///< pin name
 
     pybind11::dict net_name2id_map; ///< net name to id map
     pybind11::dict pin_name2id_map; ///< pin name to id map
     pybind11::list net_names; ///< net name 
     pybind11::list net2pin_map; ///< array of 1D array, each row stores pin id
-    pybind11::list flat_net2pin_map; ///< flatten version of net2pin_map 
-    pybind11::list flat_net2pin_start_map; ///< starting index of each net in flat_net2pin_map
-    pybind11::list net_weights; ///< net weight 
-    pybind11::list net_weight_deltas; ///< net weight deltas
-    pybind11::list net_criticality; ///< net criticality
-    pybind11::list net_criticality_deltas; ///< net criticality deltas
+    std::vector<index_type> flat_net2pin_map; ///< flatten version of net2pin_map 
+    std::vector<index_type> flat_net2pin_start_map; ///< starting index of each net in flat_net2pin_map
+    std::vector<double> net_weights; ///< net weight 
+    std::vector<double> net_weight_deltas; ///< net weight deltas
+    std::vector<double> net_criticality; ///< net criticality
+    std::vector<double> net_criticality_deltas; ///< net criticality deltas
 
     pybind11::list node2pin_map; ///< array of 1D array, contains pin id of each node 
-    pybind11::list flat_node2pin_map; ///< flatten version of node2pin_map 
-    pybind11::list flat_node2pin_start_map; ///< starting index of each node in flat_node2pin_map
+    std::vector<index_type> flat_node2pin_map; ///< flatten version of node2pin_map 
+    std::vector<index_type> flat_node2pin_start_map; ///< starting index of each node in flat_node2pin_map
 
-    pybind11::list pin2node_map; ///< 1D array, contain parent node id of each pin 
-    pybind11::list pin2net_map; ///< 1D array, contain parent net id of each pin 
+    std::vector<index_type> pin2node_map; ///< 1D array, contain parent node id of each pin 
+    std::vector<index_type> pin2net_map; ///< 1D array, contain parent net id of each pin 
 
     pybind11::list rows; ///< NumRows x 4 array, stores xl, yl, xh, yh of each row 
 

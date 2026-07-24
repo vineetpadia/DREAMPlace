@@ -18,7 +18,7 @@ void sumPinWeightsLauncher(
     node_weights[i] = 0;
     const auto& pins = db.node2pin_map[i];
     for (const auto& pin : pins)
-      node_weights[i] += net_weights[db.pin2net_map[pin].cast<int>()];
+      node_weights[i] += net_weights[db.pin2net_map[pin.cast<size_t>()]];
   }
 }
 
@@ -43,9 +43,29 @@ void sum_pin_weights(
     });
 }
 
+/// \brief Expose a contiguous vector as a numpy array without copying.
+///
+/// The large flat arrays used to be pybind11::list, which meant building one Python
+/// object per element in C++ and then walking that list again in np.array() on the
+/// Python side -- roughly 4.5M object creations per read for a design like adaptec1.
+/// Handing back a view costs nothing here; PlaceDB.py immediately copies it into an
+/// array of its own dtype. `base` keeps the owning PyPlaceDB alive for the view.
+template <typename T>
+pybind11::array_t<T> as_numpy(const std::vector<T>& v, pybind11::object base) {
+  return pybind11::array_t<T>({(pybind11::ssize_t)v.size()},
+                              {(pybind11::ssize_t)sizeof(T)}, v.data(), base);
+}
+
 } // namespace _pybind
 
-void bind_PyPlaceDB(pybind11::module& m) 
+// Expanded outside namespace _pybind, so qualify the helper.
+#define DREAMPLACE_VECTOR_PROPERTY(name)                              \
+  def_property_readonly(#name, [](pybind11::object self) {            \
+    return _pybind::as_numpy(                                         \
+        self.cast<DREAMPLACE_NAMESPACE::PyPlaceDB&>().name, self);    \
+  })
+
+void bind_PyPlaceDB(pybind11::module& m)
 {
     pybind11::class_<DREAMPLACE_NAMESPACE::PyPlaceDB>(m, "PyPlaceDB")
         .def(pybind11::init<>())
@@ -54,35 +74,35 @@ void bind_PyPlaceDB(pybind11::module& m)
         .def_readwrite("num_terminal_NIs", &DREAMPLACE_NAMESPACE::PyPlaceDB::num_terminal_NIs)
         .def_readwrite("node_name2id_map", &DREAMPLACE_NAMESPACE::PyPlaceDB::node_name2id_map)
         .def_readwrite("node_names", &DREAMPLACE_NAMESPACE::PyPlaceDB::node_names)
-        .def_readwrite("node_x", &DREAMPLACE_NAMESPACE::PyPlaceDB::node_x)
-        .def_readwrite("node_y", &DREAMPLACE_NAMESPACE::PyPlaceDB::node_y)
+        .DREAMPLACE_VECTOR_PROPERTY(node_x)
+        .DREAMPLACE_VECTOR_PROPERTY(node_y)
         .def_readwrite("node_orient", &DREAMPLACE_NAMESPACE::PyPlaceDB::node_orient)
-        .def_readwrite("node_size_x", &DREAMPLACE_NAMESPACE::PyPlaceDB::node_size_x)
-        .def_readwrite("node_size_y", &DREAMPLACE_NAMESPACE::PyPlaceDB::node_size_y)
-        .def_readwrite("node2orig_node_map", &DREAMPLACE_NAMESPACE::PyPlaceDB::node2orig_node_map)
+        .DREAMPLACE_VECTOR_PROPERTY(node_size_x)
+        .DREAMPLACE_VECTOR_PROPERTY(node_size_y)
+        .DREAMPLACE_VECTOR_PROPERTY(node2orig_node_map)
         .def_readwrite("pin_direct", &DREAMPLACE_NAMESPACE::PyPlaceDB::pin_direct)
-        .def_readwrite("pin_offset_x", &DREAMPLACE_NAMESPACE::PyPlaceDB::pin_offset_x)
-        .def_readwrite("pin_offset_y", &DREAMPLACE_NAMESPACE::PyPlaceDB::pin_offset_y)
+        .DREAMPLACE_VECTOR_PROPERTY(pin_offset_x)
+        .DREAMPLACE_VECTOR_PROPERTY(pin_offset_y)
         .def_readwrite("pin_names", &DREAMPLACE_NAMESPACE::PyPlaceDB::pin_names)
         .def_readwrite("net_name2id_map", &DREAMPLACE_NAMESPACE::PyPlaceDB::net_name2id_map)
         .def_readwrite("pin_name2id_map", &DREAMPLACE_NAMESPACE::PyPlaceDB::pin_name2id_map)
         .def_readwrite("net_names", &DREAMPLACE_NAMESPACE::PyPlaceDB::net_names)
         .def_readwrite("net2pin_map", &DREAMPLACE_NAMESPACE::PyPlaceDB::net2pin_map)
-        .def_readwrite("flat_net2pin_map", &DREAMPLACE_NAMESPACE::PyPlaceDB::flat_net2pin_map)
-        .def_readwrite("flat_net2pin_start_map", &DREAMPLACE_NAMESPACE::PyPlaceDB::flat_net2pin_start_map)
-        .def_readwrite("net_weights", &DREAMPLACE_NAMESPACE::PyPlaceDB::net_weights)
-        .def_readwrite("net_weight_deltas", &DREAMPLACE_NAMESPACE::PyPlaceDB::net_weight_deltas)
-        .def_readwrite("net_criticality", &DREAMPLACE_NAMESPACE::PyPlaceDB::net_criticality)
-        .def_readwrite("net_criticality_deltas", &DREAMPLACE_NAMESPACE::PyPlaceDB::net_criticality_deltas)
+        .DREAMPLACE_VECTOR_PROPERTY(flat_net2pin_map)
+        .DREAMPLACE_VECTOR_PROPERTY(flat_net2pin_start_map)
+        .DREAMPLACE_VECTOR_PROPERTY(net_weights)
+        .DREAMPLACE_VECTOR_PROPERTY(net_weight_deltas)
+        .DREAMPLACE_VECTOR_PROPERTY(net_criticality)
+        .DREAMPLACE_VECTOR_PROPERTY(net_criticality_deltas)
         .def_readwrite("node2pin_map", &DREAMPLACE_NAMESPACE::PyPlaceDB::node2pin_map)
-        .def_readwrite("flat_node2pin_map", &DREAMPLACE_NAMESPACE::PyPlaceDB::flat_node2pin_map)
-        .def_readwrite("flat_node2pin_start_map", &DREAMPLACE_NAMESPACE::PyPlaceDB::flat_node2pin_start_map)
+        .DREAMPLACE_VECTOR_PROPERTY(flat_node2pin_map)
+        .DREAMPLACE_VECTOR_PROPERTY(flat_node2pin_start_map)
         .def_readwrite("regions", &DREAMPLACE_NAMESPACE::PyPlaceDB::regions)
         .def_readwrite("flat_region_boxes", &DREAMPLACE_NAMESPACE::PyPlaceDB::flat_region_boxes)
         .def_readwrite("flat_region_boxes_start", &DREAMPLACE_NAMESPACE::PyPlaceDB::flat_region_boxes_start)
         .def_readwrite("node2fence_region_map", &DREAMPLACE_NAMESPACE::PyPlaceDB::node2fence_region_map)
-        .def_readwrite("pin2node_map", &DREAMPLACE_NAMESPACE::PyPlaceDB::pin2node_map)
-        .def_readwrite("pin2net_map", &DREAMPLACE_NAMESPACE::PyPlaceDB::pin2net_map)
+        .DREAMPLACE_VECTOR_PROPERTY(pin2node_map)
+        .DREAMPLACE_VECTOR_PROPERTY(pin2net_map)
         .def_readwrite("rows", &DREAMPLACE_NAMESPACE::PyPlaceDB::rows)
         .def_readwrite("xl", &DREAMPLACE_NAMESPACE::PyPlaceDB::xl)
         .def_readwrite("yl", &DREAMPLACE_NAMESPACE::PyPlaceDB::yl)
