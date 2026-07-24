@@ -29,9 +29,11 @@ inline void init_auction(
         char*& stop_flags
         )
 {
-    checkCUDA(cudaMalloc(&scratch, 
-                num_graphs*(4*num_nodes+1)*sizeof(int) + num_graphs*(num_nodes*num_nodes+num_nodes)*sizeof(T)
-                ));
+    checkCUDA(cudaMalloc(
+            &scratch,
+            num_graphs * 2 * num_nodes * sizeof(int) +
+            num_graphs * num_nodes * sizeof(unsigned long long) +
+            num_graphs * num_nodes * sizeof(T)));
     allocateCUDA(stop_flags, num_graphs, char);
 }
 
@@ -142,10 +144,8 @@ linear_assignment_auction_kernel(const int num_nodes,
                                         const T* __restrict__ data_ptr,
                                         int* person2item_ptr, 
                                         int*  item2person_ptr,
-                                        T*  bids_ptr,
+                                        unsigned long long* winning_bids_ptr,
                                         T*  prices_ptr,
-                                        int* sbids_ptr,
-                                        int* bid_items_ptr,
                                         char* stop_flag_ptr,
                                         const float auction_max_eps,
                                         const float auction_min_eps,
@@ -167,15 +167,12 @@ linear_assignment_auction_kernel(const int num_nodes,
     const T* __restrict__ data = data_ptr + batch_id * num_nodes * num_nodes;
     int* person2item = person2item_ptr + batch_id * num_nodes; 
     int*  item2person = item2person_ptr + batch_id * num_nodes;
-    T* bids = bids_ptr + batch_id * num_nodes * num_nodes;
-    int* sbids = sbids_ptr + batch_id * num_nodes;
-    int* bid_items = bid_items_ptr + batch_id * num_nodes;
+    unsigned long long* winning_bids =
+        winning_bids_ptr + batch_id * num_nodes;
     T*  prices = prices_ptr + batch_id * num_nodes;
     char* stop_flag = stop_flag_ptr + batch_id;
 
     __syncthreads();
-
-    bid_items[node_id] = -1;
 
     while(auction_eps >= auction_min_eps && num_iteration < max_iterations)
     {
@@ -194,14 +191,7 @@ linear_assignment_auction_kernel(const int num_nodes,
         //start iterative solving
         while(num_assigned < num_nodes && num_iteration < max_iterations)
         {
-            // Each person emits at most one bid per round. Clear only that
-            // previous entry instead of rewriting the full N x N matrix.
-            int previous_item = bid_items[node_id];
-            if (previous_item >= 0) {
-                bids[num_nodes * previous_item + node_id] = 0;
-            }
-            bid_items[node_id] = -1;
-            sbids[node_id] = 0;
+            winning_bids[node_id] = 0;
 
             //preload price
             s_prices[node_id] = prices[node_id];
@@ -238,26 +228,25 @@ linear_assignment_auction_kernel(const int num_nodes,
                     top2_val = top1_val;
                 }
                 T bid = top1_val - top2_val + auction_eps;
-                bids[num_nodes * top1_col + node_id] = bid;
-                bid_items[node_id] = top1_col;
-                atomicMax(sbids + top1_col, 1);
+                // Maximize the bid and, for ties, retain the lowest bidder ID
+                // to match the original ordered scan exactly.
+                unsigned long long bid_key =
+                    (static_cast<unsigned long long>(
+                         static_cast<unsigned int>(bid))
+                     << 32) |
+                    (0xFFFFFFFFu - static_cast<unsigned int>(node_id));
+                atomicMax(winning_bids + top1_col, bid_key);
             }
 
             __syncthreads();
 
             //phase 3 : assignment
-            if(sbids[node_id] != 0) {
-                T high_bid  = 0;
-                int high_bidder = -1;
-    
-                T tmp_bid = -1;
-                for(int i = 0; i < num_nodes; i++){
-                    tmp_bid = bids[node_id * num_nodes + i];
-                    if(tmp_bid > high_bid){
-                        high_bid    = tmp_bid;
-                        high_bidder = i;
-                    }
-                }
+            unsigned long long winning_bid = winning_bids[node_id];
+            if(winning_bid != 0) {
+                T high_bid = static_cast<T>(winning_bid >> 32);
+                int high_bidder = static_cast<int>(
+                    0xFFFFFFFFu -
+                    static_cast<unsigned int>(winning_bid));
     
                 int current_person = item2person[node_id];
                 if(current_person >= 0){
@@ -307,16 +296,15 @@ void linear_assignment_auction(
     //get pointers from scratch
     int* person2item  = (int*) scratch;
     int* item2person  = person2item + num_graphs * num_nodes;
-    int* sbids        = item2person + num_graphs * num_nodes;
-    int* bid_items    = sbids + num_graphs * num_nodes;
-    T*   prices       = (T*)(bid_items + num_graphs * num_nodes);
-    T*   bids         = prices + num_graphs * num_nodes;
+    unsigned long long* winning_bids =
+        reinterpret_cast<unsigned long long*>(
+            item2person + num_graphs * num_nodes);
+    T* prices = reinterpret_cast<T*>(
+        winning_bids + num_graphs * num_nodes);
 
     //init
     checkCUDA(cudaMemsetAsync(
             prices, 0, num_graphs * num_nodes * sizeof(T)));
-    checkCUDA(cudaMemsetAsync(
-            bids, 0, num_graphs * num_nodes * num_nodes * sizeof(T)));
 
     //launch solver
     linear_assignment_auction_kernel<T><<<num_graphs, num_nodes, num_nodes*sizeof(T)>>>
@@ -325,10 +313,8 @@ void linear_assignment_auction(
                                         cost_matrics,
                                         person2item,
                                         item2person,
-                                        bids,
+                                        winning_bids,
                                         prices,
-                                        sbids,
-                                        bid_items,
                                         stop_flags,
                                         auction_max_eps,
                                         auction_min_eps,
