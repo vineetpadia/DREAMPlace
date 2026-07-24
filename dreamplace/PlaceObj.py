@@ -758,11 +758,42 @@ class PlaceObj(nn.Module):
             deterministic_flag=params.deterministic_flag,
             sorted_node_map=data_collections.sorted_node_map,
             movable_macro_mask=data_collections.movable_macro_mask,
-            fast_mode=params.RePlAce_skip_energy_flag,
+            fast_mode=self.skip_density_energy(params, placedb),
             region_id=region_id,
             fence_regions=fence_regions,
             node2fence_region_map=data_collections.node2fence_region_map,
             placedb=placedb)
+
+    def skip_density_energy(self, params, placedb):
+        """
+        @brief whether the density operator may skip the scalar energy and return gradient only
+        @param params parameters
+        @param placedb placement database
+
+        Evaluating the potential energy costs an extra inverse transform plus a reduction,
+        and the source notes it dominates the density forward pass. It is safe to skip only
+        where nothing consumes the resulting scalar:
+
+          - Nesterov accepts a step on the ratio of |v_kp1 - v_k| to |g_kp1 - g_k|, never on
+            the objective, so the trajectory is unchanged.
+          - Global-placement stopping and divergence detection read overflow/HPWL/max_density.
+
+        Fence regions are the exception and must keep exact energy:
+          - initialize_density_weight builds init_density from the energy of each region and
+            inverts it, so a zero energy yields a degenerate preconditioner.
+          - quad_penalty (forced on by fence regions) divides by init_density.
+          - the overflow-based density-weight update normalizes cur_metric.density by its own
+            norm, which is 0/0 -> NaN when the energy is skipped.
+
+        With no fence regions, quad_penalty is off and the density-weight update is forced to
+        the HPWL rule (see build_update_density_weight), so the scalar is report-only.
+        """
+        if params.RePlAce_skip_energy_flag:
+            return True  # explicitly requested by the user
+        if len(placedb.regions) > 0:
+            return False
+        optimizer = str(self.global_place_params.get("optimizer", "")).lower()
+        return optimizer == "nesterov"
 
     def initialize_density_weight(self, params, placedb):
         """
