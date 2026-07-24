@@ -58,6 +58,7 @@ class NesterovAcceleratedGradientOptimizer(Optimizer):
         defaults = dict(lr=lr,
                 u_k=[], v_k=[], g_k=[], obj_k=[], a_k=[], alpha_k=[],
                 v_k_1=[], g_k_1=[], obj_k_1=[],
+                u_kp1 = [None],
                 v_kp1 = [None],
                 obj_eval_count=0)
         super(NesterovAcceleratedGradientOptimizer, self).__init__(params, defaults)
@@ -126,6 +127,10 @@ class NesterovAcceleratedGradientOptimizer(Optimizer):
                 if group['v_kp1'][i] is None:
                     group['v_kp1'][i] = torch.autograd.Variable(torch.zeros_like(v_k), requires_grad=True)
                 v_kp1 = group['v_kp1'][i]
+                u_kp1_state = group.setdefault('u_kp1', [None])
+                if u_kp1_state[i] is None:
+                    u_kp1_state[i] = torch.zeros_like(v_k)
+                u_kp1 = u_kp1_state[i]
 
                 # line search with alpha_k as hint
                 if isinstance(a_k, np.float32):
@@ -143,9 +148,12 @@ class NesterovAcceleratedGradientOptimizer(Optimizer):
                     # Optimizer state updates are not part of the objective's
                     # autograd graph. Using the value view avoids constructing
                     # and immediately discarding a graph every iteration.
-                    u_kp1 = v_k.data - alpha_k*g_k
+                    torch.mul(alpha_k, g_k, out=u_kp1)
+                    torch.sub(v_k.data, u_kp1, out=u_kp1)
                     #constraint_fn(u_kp1)
-                    v_kp1.data.copy_(u_kp1 + coef*(u_kp1-u_k))
+                    torch.sub(u_kp1, u_k, out=v_kp1.data)
+                    v_kp1.data.mul_(coef)
+                    torch.add(u_kp1, v_kp1.data, out=v_kp1.data)
                     # make sure v_kp1 subjects to constraints
                     # g_kp1 must correspond to v_kp1
                     constraint_fn(v_kp1)
@@ -176,7 +184,7 @@ class NesterovAcceleratedGradientOptimizer(Optimizer):
                 g_k_1.data.copy_(g_k.data)
                 obj_k_1.data.copy_(obj_k.data)
 
-                u_k.data.copy_(u_kp1.data)
+                group['u_k'][i], group['u_kp1'][i] = u_kp1, u_k
                 v_k.data.copy_(v_kp1.data)
                 g_k.data.copy_(g_kp1.data)
                 obj_k.data.copy_(f_kp1.data)
