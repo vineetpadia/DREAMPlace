@@ -15,6 +15,22 @@ from torch.optim.optimizer import Optimizer, required
 import torch.nn as nn
 import pdb
 
+
+def _nesterov_acceleration_float32(a_k):
+    """Match the CUDA float32 recurrence without launching scalar kernels."""
+    a_k_squared = np.float32(a_k * a_k)
+    root = np.float32(
+        np.sqrt(np.float32(
+            np.float32(4.0) * a_k_squared + np.float32(1.0)
+        ))
+    )
+    a_kp1 = np.float32(
+        np.float32(np.float32(1.0) + root) / np.float32(2.0)
+    )
+    coef = np.float32(np.float32(a_k - np.float32(1.0)) / a_kp1)
+    return a_kp1, float(coef)
+
+
 class NesterovAcceleratedGradientOptimizer(Optimizer):
     """
     @brief Follow the Nesterov's implementation of e-place algorithm 2
@@ -90,7 +106,10 @@ class NesterovAcceleratedGradientOptimizer(Optimizer):
                 g_k = group['g_k'][i]
                 obj_k = group['obj_k'][i]
                 if not group['a_k']:
-                    group['a_k'].append(torch.ones(1, dtype=g_k.dtype, device=g_k.device))
+                    if g_k.is_cuda and g_k.dtype == torch.float32:
+                        group['a_k'].append(np.float32(1.0))
+                    else:
+                        group['a_k'].append(torch.ones(1, dtype=g_k.dtype, device=g_k.device))
                     group['v_k_1'].append(torch.autograd.Variable(torch.zeros_like(v_k), requires_grad=True))
                     group['v_k_1'][i].data.copy_(group['v_k'][i].data-group['lr']*g_k)
                     obj, grad = obj_and_grad_fn(group['v_k_1'][i])
@@ -109,8 +128,11 @@ class NesterovAcceleratedGradientOptimizer(Optimizer):
                 v_kp1 = group['v_kp1'][i]
 
                 # line search with alpha_k as hint
-                a_kp1 = (1 + (4*a_k.pow(2)+1).sqrt()) / 2
-                coef = (a_k-1) / a_kp1
+                if isinstance(a_k, np.float32):
+                    a_kp1, coef = _nesterov_acceleration_float32(a_k)
+                else:
+                    a_kp1 = (1 + (4*a_k.pow(2)+1).sqrt()) / 2
+                    coef = (a_k-1) / a_kp1
                 alpha_kp1 = 0
                 backtrack_cnt = 0
                 max_backtrack_cnt = 10
@@ -158,7 +180,10 @@ class NesterovAcceleratedGradientOptimizer(Optimizer):
                 v_k.data.copy_(v_kp1.data)
                 g_k.data.copy_(g_kp1.data)
                 obj_k.data.copy_(f_kp1.data)
-                a_k.data.copy_(a_kp1.data)
+                if isinstance(a_k, np.float32):
+                    group['a_k'][i] = a_kp1
+                else:
+                    a_k.data.copy_(a_kp1.data)
 
                 # although the solution should be u_k
                 # we need the gradient of v_k
