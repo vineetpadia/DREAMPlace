@@ -10,9 +10,12 @@
 #include <float.h>
 #include <limits.h>
 
-// CUDA 12.8 introduces cuda::std::numeric_limits which conflicts with cuda::numeric_limits
+// CUDA 12.0 ships CCCL 2.x, whose CUB refers to cuda::std::* from inside the namespace that
+// utils_cub.cuh wraps CUB in (CUB_NS_PREFIX). Unqualified lookup from DreamPlace::cub then
+// finds this DreamPlace::cuda namespace, which has no `std`, and the build fails. The guard
+// below previously started at 12080, so toolkits in 12.0-12.7 still collided.
 // We use a macro to conditionally rename our namespace to avoid conflicts
-#if defined(__CUDACC__) && defined(CUDA_VERSION) && (CUDA_VERSION >= 12080)
+#if defined(__CUDACC__) && defined(CUDA_VERSION) && (CUDA_VERSION >= 12000)
   #define DREAMPLACE_CUDA_NAMESPACE dreamplace_cuda
 #else
   #define DREAMPLACE_CUDA_NAMESPACE cuda
