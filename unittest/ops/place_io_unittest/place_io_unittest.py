@@ -37,6 +37,33 @@ def array2str(a):
     return "[%s]" % (content)
 
 class PlaceIOOpTest(unittest.TestCase):
+    def test_build_args_preserves_paths(self):
+        params = Params()
+        params.aux_input = "/tmp/design with spaces/design.aux"
+        params.lef_input = ["/tmp/cells one.lef", "/tmp/cells two.lef"]
+        params.def_input = "/tmp/design with spaces/design.def"
+        params.verilog_input = "/tmp/design with spaces/design.v"
+        params.sort_nets_by_degree = 1
+
+        self.assertEqual(
+            place_io.PlaceIOFunction.build_args(params),
+            [
+                "DREAMPlace",
+                "--bookshelf_aux_input",
+                params.aux_input,
+                "--lef_input",
+                params.lef_input[0],
+                "--lef_input",
+                params.lef_input[1],
+                "--def_input",
+                params.def_input,
+                "--verilog_input",
+                params.verilog_input,
+                "--sort_nets_by_degree",
+                "1",
+            ],
+        )
+
     def test_simple(self):
         params = Params()
         design = os.path.dirname(os.path.realpath(__file__))

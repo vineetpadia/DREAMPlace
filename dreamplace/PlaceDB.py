@@ -10,6 +10,11 @@ import os
 import re
 import math
 import time
+import base64
+import hashlib
+import json
+import tempfile
+from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import torch
 import logging
@@ -28,12 +33,54 @@ class PlaceDB (object):
     """
     @brief placement database
     """
+    _database_cache_schema = 2
+    # Only settings read while constructing/initializing PlaceDB belong here.
+    # Optimization parameters (gamma, learning rate, iteration limits, etc.)
+    # deliberately do not invalidate the cache, so parameter sweeps reuse it.
+    _database_cache_params = (
+        "aux_input",
+        "lef_input",
+        "def_input",
+        "verilog_input",
+        "sort_nets_by_degree",
+        "dtype",
+        "global_place_flag",
+        "route_num_bins_x",
+        "route_num_bins_y",
+        "unit_horizontal_capacity",
+        "unit_vertical_capacity",
+        "max_net_weight",
+        "num_bins_x",
+        "num_bins_y",
+        "target_density",
+        "shift_factor",
+        "scale_factor",
+        "macro_place_flag",
+        "use_bb",
+        "enable_fillers",
+    )
+    # initialize() resolves these "auto"/heuristic settings in place. A cache
+    # hit must reproduce those mutations because later placement code reads
+    # them from Params rather than PlaceDB.
+    _database_cache_param_updates = (
+        "shift_factor",
+        "scale_factor",
+        "target_density",
+        "num_bins_x",
+        "num_bins_y",
+        "macro_place_flag",
+        "use_bb",
+    )
+
     def __init__(self):
         """
         initialization
         To avoid the usage of list, I flatten everything.
         """
-        self.rawdb = None # raw placement database, a C++ object
+        self._rawdb = None # raw placement database, a C++ object
+        self._rawdb_future = None
+        self._rawdb_executor = None
+        self._rawdb_parse_start = None
         self.pydb = None # python placement database interface
 
         self.num_physical_nodes = 0 # number of real nodes, including movable nodes, terminals, and terminal_NIs
@@ -120,6 +167,362 @@ class PlaceDB (object):
 
         self.max_net_weight = None # maximum net weight in timing opt
         self.dtype = None
+
+    @property
+    def rawdb(self):
+        """Return the canonical C++ database, waiting for warm-cache parsing."""
+        if self._rawdb is None and self._rawdb_future is not None:
+            waited = not self._rawdb_future.done()
+            tt = time.time()
+            self._rawdb, parse_end = self._rawdb_future.result()
+            if waited:
+                logging.info(
+                    "waited %.3f seconds for background database parsing",
+                    time.time() - tt,
+                )
+            logging.info(
+                "background database parsing completed in %.3f seconds",
+                parse_end - self._rawdb_parse_start,
+            )
+            self._rawdb_future = None
+            if self._rawdb_executor is not None:
+                self._rawdb_executor.shutdown(wait=False)
+                self._rawdb_executor = None
+        return self._rawdb
+
+    @rawdb.setter
+    def rawdb(self, value):
+        self._rawdb = value
+
+    def _start_background_rawdb_read(self, params):
+        """Parse the C++ database while cached Python state starts placement."""
+        args = place_io.PlaceIOFunction.build_args(params)
+
+        def read():
+            rawdb = place_io.PlaceIOFunction.read_from_args(args)
+            return rawdb, time.time()
+
+        self._rawdb_parse_start = time.time()
+        self._rawdb_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="dreamplace-placedb"
+        )
+        self._rawdb_future = self._rawdb_executor.submit(read)
+
+    @staticmethod
+    def _database_cache_file_signature(path):
+        path = os.path.realpath(os.path.expanduser(str(path)))
+        try:
+            stat = os.stat(path)
+            return (path, stat.st_size, stat.st_mtime_ns)
+        except OSError:
+            return (path, None, None)
+
+    @classmethod
+    def _database_cache_input_files(cls, params):
+        """Return all parser inputs, including files named by a Bookshelf AUX."""
+        paths = set()
+
+        def add(value):
+            if not value:
+                return
+            if isinstance(value, (list, tuple)):
+                for item in value:
+                    add(item)
+            else:
+                paths.add(os.path.realpath(os.path.expanduser(str(value))))
+
+        add(getattr(params, "aux_input", ""))
+        add(getattr(params, "lef_input", ""))
+        add(getattr(params, "def_input", ""))
+        add(getattr(params, "verilog_input", ""))
+
+        aux_input = getattr(params, "aux_input", "")
+        if aux_input:
+            aux_path = os.path.realpath(os.path.expanduser(str(aux_input)))
+            try:
+                with open(aux_path, "r") as aux_file:
+                    aux_text = aux_file.read()
+                aux_dir = os.path.dirname(aux_path)
+                # AUX is a one-line manifest. Only retain tokens that resolve
+                # to files, ignoring the format name and ':' separator.
+                for token in re.findall(r"[^\s:]+", aux_text):
+                    candidate = os.path.realpath(os.path.join(aux_dir, token))
+                    if os.path.isfile(candidate):
+                        paths.add(candidate)
+            except OSError:
+                pass
+
+        return sorted(paths)
+
+    @classmethod
+    def _database_cache_context(cls, params):
+        if not getattr(params, "database_cache_flag", 0):
+            return None
+
+        settings = {
+            name: getattr(params, name, None)
+            for name in cls._database_cache_params
+        }
+        inputs = [
+            cls._database_cache_file_signature(path)
+            for path in cls._database_cache_input_files(params)
+        ]
+        # Invalidate caches when either the Python initializer or compiled
+        # parser changes, even if the benchmark and settings did not.
+        implementation = [
+            cls._database_cache_file_signature(__file__),
+            cls._database_cache_file_signature(place_io.place_io_cpp.__file__),
+        ]
+        metadata = {
+            "schema": cls._database_cache_schema,
+            "settings": settings,
+            "inputs": inputs,
+            "implementation": implementation,
+        }
+        encoded = json.dumps(
+            metadata, sort_keys=True, separators=(",", ":"), default=str
+        ).encode("utf-8")
+        key = hashlib.sha256(encoded).hexdigest()
+
+        cache_dir = getattr(params, "database_cache_dir", "")
+        if not cache_dir:
+            cache_dir = os.path.join(
+                getattr(params, "result_dir", "results"), ".placedb_cache"
+            )
+        cache_dir = os.path.realpath(os.path.expanduser(str(cache_dir)))
+
+        try:
+            design_name = params.design_name()
+        except Exception:
+            design_name = "design"
+        design_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", design_name) or "design"
+        cache_file = os.path.join(
+            cache_dir, "%s-%s.npz" % (design_name, key[:20])
+        )
+        return {"key": key, "file": cache_file}
+
+    @staticmethod
+    def _expand_pin_map(flat_map, start_map):
+        """Rebuild the historical object-array API from compact CSR arrays."""
+        result = np.empty(len(start_map) - 1, dtype=object)
+        for i in range(len(result)):
+            # Keep the cold-path ownership semantics: each row is independent
+            # of the flat map rather than a mutable view into it.
+            result[i] = flat_map[start_map[i] : start_map[i + 1]].copy()
+        return result
+
+    @classmethod
+    def _database_cache_encode(cls, value, arrays):
+        """Encode cache state as JSON metadata plus non-executable ndarrays."""
+        def store(array):
+            key = "array_%d" % len(arrays)
+            arrays[key] = np.asarray(array)
+            return key
+
+        if isinstance(value, np.ndarray):
+            if value.dtype.hasobject:
+                raise TypeError("object arrays are not supported in cache state")
+            return {"type": "array", "key": store(value)}
+        if isinstance(value, np.generic):
+            return {
+                "type": "numpy_scalar",
+                "dtype": value.dtype.str,
+                "value": cls._database_cache_encode(value.item(), arrays),
+            }
+        if (
+            isinstance(value, type)
+            and issubclass(value, np.generic)
+        ):
+            return {"type": "numpy_type", "dtype": np.dtype(value).str}
+        if isinstance(value, bytes):
+            return {
+                "type": "bytes",
+                "value": base64.b64encode(value).decode("ascii"),
+            }
+        if value is None or isinstance(value, (bool, int, float, str)):
+            return {"type": "scalar", "value": value}
+        if isinstance(value, dict):
+            if all(
+                isinstance(key, str)
+                and isinstance(item, (int, np.integer))
+                for key, item in value.items()
+            ):
+                keys = np.asarray(
+                    [key.encode("utf-8") for key in value.keys()], dtype=np.bytes_
+                )
+                items = np.asarray(list(value.values()), dtype=np.int64)
+                return {
+                    "type": "string_int_dict",
+                    "keys": store(keys),
+                    "values": store(items),
+                }
+            return {
+                "type": "dict",
+                "items": [
+                    [
+                        cls._database_cache_encode(key, arrays),
+                        cls._database_cache_encode(item, arrays),
+                    ]
+                    for key, item in value.items()
+                ],
+            }
+        if isinstance(value, (list, tuple)):
+            return {
+                "type": "tuple" if isinstance(value, tuple) else "list",
+                "items": [
+                    cls._database_cache_encode(item, arrays) for item in value
+                ],
+            }
+        raise TypeError("unsupported cache value type %s" % type(value).__name__)
+
+    @classmethod
+    def _database_cache_decode(cls, spec, archive):
+        value_type = spec["type"]
+        if value_type == "array":
+            return archive[spec["key"]]
+        if value_type == "numpy_scalar":
+            value = cls._database_cache_decode(spec["value"], archive)
+            return np.asarray(value, dtype=np.dtype(spec["dtype"]))[()]
+        if value_type == "numpy_type":
+            return np.dtype(spec["dtype"]).type
+        if value_type == "bytes":
+            return base64.b64decode(spec["value"].encode("ascii"))
+        if value_type == "scalar":
+            return spec["value"]
+        if value_type == "string_int_dict":
+            keys = archive[spec["keys"]]
+            values = archive[spec["values"]]
+            return {
+                key.decode("utf-8"): int(value)
+                for key, value in zip(keys, values)
+            }
+        if value_type == "dict":
+            return {
+                cls._database_cache_decode(key, archive):
+                cls._database_cache_decode(value, archive)
+                for key, value in spec["items"]
+            }
+        if value_type in ("list", "tuple"):
+            values = [
+                cls._database_cache_decode(item, archive)
+                for item in spec["items"]
+            ]
+            return tuple(values) if value_type == "tuple" else values
+        raise ValueError("unknown cache value type %s" % value_type)
+
+    def _load_database_cache(self, params, context):
+        cache_file = context["file"]
+        if not os.path.isfile(cache_file):
+            return False
+
+        tt = time.time()
+        try:
+            with np.load(cache_file, allow_pickle=False) as archive:
+                manifest = json.loads(str(archive["manifest"].item()))
+                if (
+                    manifest.get("schema") != self._database_cache_schema
+                    or manifest.get("key") != context["key"]
+                ):
+                    return False
+                state = self._database_cache_decode(
+                    manifest["state"], archive
+                )
+                param_updates = self._database_cache_decode(
+                    manifest["param_updates"], archive
+                )
+
+            self.__dict__.update(state)
+            self.node2pin_map = self._expand_pin_map(
+                self.flat_node2pin_map, self.flat_node2pin_start_map
+            )
+            self.net2pin_map = self._expand_pin_map(
+                self.flat_net2pin_map, self.flat_net2pin_start_map
+            )
+            self.pydb = None
+            self.device = torch.device("cuda" if params.gpu else "cpu")
+            for name, value in param_updates.items():
+                # Avoid sharing mutable list objects with the decoded payload.
+                if isinstance(value, list):
+                    value = list(value)
+                setattr(params, name, value)
+            # Parsing starts only after cache reconstruction succeeds, so a
+            # corrupt cache can fall back without two PlaceDB parsers racing.
+            self._start_background_rawdb_read(params)
+        except Exception as error:
+            logging.warning(
+                "failed to load placement database cache %s: %s",
+                cache_file,
+                error,
+            )
+            return False
+
+        logging.info(
+            "loaded placement database cache %s in %.3f seconds",
+            cache_file,
+            time.time() - tt,
+        )
+        return True
+
+    def _save_database_cache(self, params, context):
+        cache_file = context["file"]
+        cache_dir = os.path.dirname(cache_file)
+        temp_file = None
+        try:
+            os.makedirs(cache_dir, exist_ok=True)
+            # node2pin_map/net2pin_map duplicate the existing CSR data as
+            # hundreds of thousands of tiny ndarrays. Rebuilding them from the
+            # CSR arrays substantially reduces cache size and load overhead.
+            state = {
+                name: value
+                for name, value in self.__dict__.items()
+                if not name.startswith("_")
+                and name
+                not in ("pydb", "device", "node2pin_map", "net2pin_map")
+            }
+            param_updates = {
+                name: getattr(params, name)
+                for name in self._database_cache_param_updates
+            }
+            arrays = {}
+            manifest = {
+                "schema": self._database_cache_schema,
+                "key": context["key"],
+                "state": self._database_cache_encode(state, arrays),
+                "param_updates": self._database_cache_encode(
+                    param_updates, arrays
+                ),
+            }
+            fd, temp_file = tempfile.mkstemp(
+                prefix=".placedb-", suffix=".tmp", dir=cache_dir
+            )
+            with os.fdopen(fd, "wb") as stream:
+                np.savez(
+                    stream,
+                    manifest=np.asarray(
+                        json.dumps(
+                            manifest,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                            allow_nan=True,
+                        )
+                    ),
+                    **arrays
+                )
+            os.replace(temp_file, cache_file)
+            temp_file = None
+            logging.info("saved placement database cache %s", cache_file)
+        except Exception as error:
+            logging.warning(
+                "failed to save placement database cache %s: %s",
+                cache_file,
+                error,
+            )
+        finally:
+            if temp_file is not None:
+                try:
+                    os.unlink(temp_file)
+                except OSError:
+                    pass
 
     def scale_pl(self, shift_factor, scale_factor):
         """
@@ -387,6 +790,11 @@ class PlaceDB (object):
             weights = torch.zeros(
                 self.num_nodes,
                 dtype=self.net_weights.dtype, device="cpu")
+        if self.pydb is None:
+            # Warm-cache runs intentionally defer PyPlaceDB construction. This
+            # compatibility path is rarely used by the placer itself, but keep
+            # the public helper fully functional.
+            self.pydb = place_io.PlaceIOFunction.pydb(self.rawdb)
         self.pydb.sum_pin_weights(
             torch.tensor(self.net_weights),
             weights)
@@ -660,8 +1068,14 @@ class PlaceDB (object):
         """
         tt = time.time()
 
-        self.read(params)
-        self.initialize(params)
+        cache_context = self._database_cache_context(params)
+        if cache_context is None or not self._load_database_cache(
+            params, cache_context
+        ):
+            self.read(params)
+            self.initialize(params)
+            if cache_context is not None:
+                self._save_database_cache(params, cache_context)
 
         logging.info("reading benchmark takes %g seconds" % (time.time()-tt))
 

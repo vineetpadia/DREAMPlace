@@ -115,6 +115,13 @@ PlaceDB place_io_forward(pybind11::list const& args)
         std::copy(token.begin(), token.end(), argv[i]); 
         argv[i][token.size()] = '\0';
     }
+
+    // Parsing is pure C++ and can take several seconds on large Bookshelf
+    // netlists. Release the GIL so a warm-cache run can overlap reconstruction
+    // of the canonical C++ database with Python-side placement initialization
+    // and GPU work. Argument conversion above and return-value conversion after
+    // this scope still run with the GIL held.
+    pybind11::gil_scoped_release release;
     db.userParam().read(argc, argv); 
 
     for (int i = 0; i < argc; ++i)
@@ -188,4 +195,3 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("pydb", [](DREAMPLACE_NAMESPACE::PlaceDB const& db){return DREAMPLACE_NAMESPACE::PyPlaceDB(db);}, "Convert PlaceDB to PyPlaceDB");
     m.def("forward", &DREAMPLACE_NAMESPACE::place_io_forward, "PlaceDB IO Read");
 }
-

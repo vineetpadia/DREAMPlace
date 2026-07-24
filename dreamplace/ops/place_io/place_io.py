@@ -12,27 +12,42 @@ from dreamplace.ops.place_io.place_io_cpp import SolutionFileFormat, Direction1D
 
 class PlaceIOFunction(Function):
     @staticmethod
+    def build_args(params):
+        """
+        @brief build place_io command-line arguments
+        """
+        args = ["DREAMPlace"]
+        if "aux_input" in params.__dict__ and params.aux_input:
+            args.extend(["--bookshelf_aux_input", str(params.aux_input)])
+        if "lef_input" in params.__dict__ and params.lef_input:
+            if isinstance(params.lef_input, list):
+                for lef in params.lef_input:
+                    args.extend(["--lef_input", str(lef)])
+            else:
+                args.extend(["--lef_input", str(params.lef_input)])
+        if "def_input" in params.__dict__ and params.def_input:
+            args.extend(["--def_input", str(params.def_input)])
+        if "verilog_input" in params.__dict__ and params.verilog_input:
+            args.extend(["--verilog_input", str(params.verilog_input)])
+        if "sort_nets_by_degree" in params.__dict__:
+            args.extend(
+                ["--sort_nets_by_degree", str(params.sort_nets_by_degree)]
+            )
+        return args
+
+    @staticmethod
+    def read_from_args(args):
+        """
+        @brief read design from prebuilt arguments and store it in the database
+        """
+        return place_io_cpp.forward(args)
+
+    @staticmethod
     def read(params):
         """
         @brief read design and store in placement database
         """
-        args = "DREAMPlace"
-        if "aux_input" in params.__dict__ and params.aux_input:
-            args += " --bookshelf_aux_input %s" % (params.aux_input)
-        if "lef_input" in params.__dict__ and params.lef_input:
-            if isinstance(params.lef_input, list):
-                for lef in params.lef_input:
-                    args += " --lef_input %s" % (lef)
-            else:
-                args += " --lef_input %s" % (params.lef_input)
-        if "def_input" in params.__dict__ and params.def_input:
-            args += " --def_input %s" % (params.def_input)
-        if "verilog_input" in params.__dict__ and params.verilog_input:
-            args += " --verilog_input %s" % (params.verilog_input)
-        if "sort_nets_by_degree" in params.__dict__:
-            args += " --sort_nets_by_degree %s" % (params.sort_nets_by_degree)
-
-        return place_io_cpp.forward(args.split(' '))
+        return PlaceIOFunction.read_from_args(PlaceIOFunction.build_args(params))
 
     @staticmethod
     def pydb(raw_db):

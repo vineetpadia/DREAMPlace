@@ -19,6 +19,14 @@
     "default" : "", 
     "required" : "optional for LEF/DEF"
     },
+"database_cache_flag" : {
+    "description" : "cache initialized placement databases and overlap warm-cache C++ parsing with placement, 0 | 1",
+    "default" : 1
+    },
+"database_cache_dir" : {
+    "description" : "placement database cache directory; empty uses <result_dir>/.placedb_cache",
+    "default" : ""
+    },
 "gpu" : {
     "description" : "enable gpu or not", 
     "default" : 1
