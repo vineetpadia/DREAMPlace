@@ -19,7 +19,7 @@
 
 //#define DEBUG
 //#define DYNAMIC
-//#define TIMER
+//#define K_REORDER_PROFILE
 #define DETERMINISTIC
 
 #include "utility/src/utils.cuh"
@@ -870,10 +870,12 @@ __global__ void reset_state(DetailedPlaceDBType db, StateType state,
   }
 }
 
+#ifdef K_REORDER_PROFILE
 #ifdef DYNAMIC
 #define TIMER CUDATimer
 #else
 #define TIMER CPUTimer
+#endif
 #endif
 
 template <typename T>
@@ -885,7 +887,7 @@ void k_reorder(
     const std::vector<std::vector<KReorderInstance>>& host_reorder_instances)
 #endif
 {
-#ifdef TIMER
+#ifdef K_REORDER_PROFILE
   TIMER::hr_clock_rep timer_start, timer_stop;
   TIMER::hr_clock_rep enumeration_time = 0, apply_reorder_time = 0;
   int enumeration_runs = 0, apply_reorder_runs = 0;
@@ -900,7 +902,7 @@ void k_reorder(
 #endif
     if (group_size) {
       for (int offset = 0; offset < state.K; offset += state.K / 2) {
-#ifdef TIMER
+#ifdef K_REORDER_PROFILE
         timer_start = TIMER::getGlobaltime();
 #endif
         reset_state<<<64, 512>>>(db, state, group_id);
@@ -925,14 +927,14 @@ void k_reorder(
         // print_instance_net_bboxes<<<1, 1>>>(state, group_id, offset);
         compute_reorder_hpwl<<<ceilDiv(group_size, 256), 256>>>(
             db, state, group_id, offset);
-#ifdef TIMER
+#ifdef K_REORDER_PROFILE
         checkCUDA(cudaDeviceSynchronize());
         timer_stop = TIMER::getGlobaltime();
         enumeration_time += timer_stop - timer_start;
         enumeration_runs += 1;
 #endif
 
-#ifdef TIMER
+#ifdef K_REORDER_PROFILE
         timer_start = TIMER::getGlobaltime();
 #endif
         // print_costs<<<1, 1>>>(state, group_id, offset);
@@ -942,7 +944,7 @@ void k_reorder(
         // print_best_permute_id<<<1, 1>>>(state, group_id, offset);
         apply_reorder<<<ceilDiv(group_size, 256), 256>>>(db, state, group_id,
                                                          offset);
-#ifdef TIMER
+#ifdef K_REORDER_PROFILE
         checkCUDA(cudaDeviceSynchronize());
         timer_stop = TIMER::getGlobaltime();
         apply_reorder_time += timer_stop - timer_start;
@@ -952,7 +954,7 @@ void k_reorder(
       }
     }
   }
-#ifdef TIMER
+#ifdef K_REORDER_PROFILE
   dreamplacePrint(
       kDEBUG, "enumeration takes %g ms for %d runs, average %g ms\n",
       TIMER::getTimerPeriod() * enumeration_time, enumeration_runs,
