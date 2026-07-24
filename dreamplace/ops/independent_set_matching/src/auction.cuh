@@ -30,7 +30,7 @@ inline void init_auction(
         )
 {
     checkCUDA(cudaMalloc(&scratch, 
-                num_graphs*(3*num_nodes+1)*sizeof(int) + num_graphs*(num_nodes*num_nodes+num_nodes)*sizeof(T)
+                num_graphs*(4*num_nodes+1)*sizeof(int) + num_graphs*(num_nodes*num_nodes+num_nodes)*sizeof(T)
                 ));
     allocateCUDA(stop_flags, num_graphs, char);
 }
@@ -145,6 +145,7 @@ linear_assignment_auction_kernel(const int num_nodes,
                                         T*  bids_ptr,
                                         T*  prices_ptr,
                                         int* sbids_ptr,
+                                        int* bid_items_ptr,
                                         char* stop_flag_ptr,
                                         const float auction_max_eps,
                                         const float auction_min_eps,
@@ -168,10 +169,13 @@ linear_assignment_auction_kernel(const int num_nodes,
     int*  item2person = item2person_ptr + batch_id * num_nodes;
     T* bids = bids_ptr + batch_id * num_nodes * num_nodes;
     int* sbids = sbids_ptr + batch_id * num_nodes;
+    int* bid_items = bid_items_ptr + batch_id * num_nodes;
     T*  prices = prices_ptr + batch_id * num_nodes;
     char* stop_flag = stop_flag_ptr + batch_id;
 
     __syncthreads();
+
+    bid_items[node_id] = -1;
 
     while(auction_eps >= auction_min_eps && num_iteration < max_iterations)
     {
@@ -190,13 +194,14 @@ linear_assignment_auction_kernel(const int num_nodes,
         //start iterative solving
         while(num_assigned < num_nodes && num_iteration < max_iterations)
         {
-            //phase 1: init bid and bids
-            for(int i = node_id; i < num_nodes; i += blockDim.x){
-                sbids[i] = 0;
+            // Each person emits at most one bid per round. Clear only that
+            // previous entry instead of rewriting the full N x N matrix.
+            int previous_item = bid_items[node_id];
+            if (previous_item >= 0) {
+                bids[num_nodes * previous_item + node_id] = 0;
             }
-            for(int i = node_id; i < num_nodes*num_nodes; i += blockDim.x){
-                bids[i] = 0;
-            }
+            bid_items[node_id] = -1;
+            sbids[node_id] = 0;
 
             //preload price
             s_prices[node_id] = prices[node_id];
@@ -234,6 +239,7 @@ linear_assignment_auction_kernel(const int num_nodes,
                 }
                 T bid = top1_val - top2_val + auction_eps;
                 bids[num_nodes * top1_col + node_id] = bid;
+                bid_items[node_id] = top1_col;
                 atomicMax(sbids + top1_col, 1);
             }
 
@@ -298,15 +304,19 @@ void linear_assignment_auction(
                 const float auction_factor,
                 const int max_iterations)
 {
-    //get pointers from scratch, size of scratch: num_graphs * (4*num_nodes + num_nodes*num_nodes) * 4 bytes
+    //get pointers from scratch
     int* person2item  = (int*) scratch;
     int* item2person  = person2item + num_graphs * num_nodes;
     int* sbids        = item2person + num_graphs * num_nodes;
-    T*   prices       = (T*)(sbids + num_graphs * num_nodes);
+    int* bid_items    = sbids + num_graphs * num_nodes;
+    T*   prices       = (T*)(bid_items + num_graphs * num_nodes);
     T*   bids         = prices + num_graphs * num_nodes;
 
     //init
-    cudaMemsetAsync(prices, 0, num_graphs * num_nodes * sizeof(T));
+    checkCUDA(cudaMemsetAsync(
+            prices, 0, num_graphs * num_nodes * sizeof(T)));
+    checkCUDA(cudaMemsetAsync(
+            bids, 0, num_graphs * num_nodes * num_nodes * sizeof(T)));
 
     //launch solver
     linear_assignment_auction_kernel<T><<<num_graphs, num_nodes, num_nodes*sizeof(T)>>>
@@ -318,6 +328,7 @@ void linear_assignment_auction(
                                         bids,
                                         prices,
                                         sbids,
+                                        bid_items,
                                         stop_flags,
                                         auction_max_eps,
                                         auction_min_eps,
