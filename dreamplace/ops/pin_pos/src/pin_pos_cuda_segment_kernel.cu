@@ -60,7 +60,7 @@ int computePinPosCudaSegmentLauncher(
 {
 	int thread_count = 512;
 
-	computePinPos<<<(num_pins+thread_count-1) / thread_count, thread_count>>>(x, y, pin_offset_x, pin_offset_y, pin2node_map, num_pins, pin_x, pin_y);
+	computePinPos<<<(num_pins+thread_count-1) / thread_count, thread_count, 0, DREAMPLACE_STREAM>>>(x, y, pin_offset_x, pin_offset_y, pin2node_map, num_pins, pin_x, pin_y);
 
     return 0;
 }
@@ -85,7 +85,7 @@ int computePinPosGradCudaSegmentLauncher(
     T* grad_out_x_perm = grad_perm_buf; 
     T* grad_out_y_perm = grad_perm_buf + num_pins;
 
-    permuteGrad<<<(num_pins+thread_count-1) / thread_count, thread_count>>>(grad_out_x, grad_out_y, flat_node2pin_map, num_pins, grad_out_x_perm, grad_out_y_perm);
+    permuteGrad<<<(num_pins+thread_count-1) / thread_count, thread_count, 0, DREAMPLACE_STREAM>>>(grad_out_x, grad_out_y, flat_node2pin_map, num_pins, grad_out_x_perm, grad_out_y_perm);
 
     void* d_temp_storage = NULL; 
     size_t temp_storage_bytes = 0; 

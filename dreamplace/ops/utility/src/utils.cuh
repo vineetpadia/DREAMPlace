@@ -8,6 +8,12 @@
 
 #include <cuda.h>
 #include <cuda_runtime.h>
+// PyTorch's current stream, so custom kernels are ordered against ATen ops rather than
+// relying on the legacy default stream. Note this is only correct for ops that do not
+// create streams of their own; move_boundary/hpwl/logsumexp_wirelength still depend on
+// legacy default-stream implicit synchronization and need explicit events first.
+#include <c10/cuda/CUDAStream.h>
+#define DREAMPLACE_STREAM at::cuda::getCurrentCUDAStream()
 // namespace
 #include "utility/src/namespace.h"
 // macro definitions

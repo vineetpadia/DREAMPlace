@@ -98,7 +98,7 @@ int computeWeightedAverageWirelengthCudaMergedLauncher(
     int thread_count = 64;
     int block_count = (num_nets * 2 + thread_count - 1) / thread_count; // separate x and y
 
-    computeWeightedAverageWirelength<<<block_count, thread_count>>>(
+    computeWeightedAverageWirelength<<<block_count, thread_count, 0, DREAMPLACE_STREAM>>>(
         x, y,
         flat_netpin,
         netpin_start,

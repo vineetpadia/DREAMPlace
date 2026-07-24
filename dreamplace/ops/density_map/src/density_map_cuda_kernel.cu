@@ -140,11 +140,11 @@ int computeDensityMapCudaLauncher(
 
         int thread_count = 512;
         int block_count = ceilDiv(num_bins, thread_count);
-        copyScaleArray<<<block_count, thread_count>>>(
+        copyScaleArray<<<block_count, thread_count, 0, DREAMPLACE_STREAM>>>(
             buf_map, density_map_tensor, scale_factor, num_bins);
 
         block_count = ceilDiv(num_nodes, thread_count);
-        computeDensityMap<<<block_count, thread_count>>>(
+        computeDensityMap<<<block_count, thread_count, 0, DREAMPLACE_STREAM>>>(
             x_tensor, y_tensor, 
             node_size_x_tensor, node_size_y_tensor, 
             num_nodes, 
@@ -154,7 +154,7 @@ int computeDensityMapCudaLauncher(
             );
 
         block_count = ceilDiv(num_bins, thread_count);
-        copyScaleArray<<<block_count, thread_count>>>(
+        copyScaleArray<<<block_count, thread_count, 0, DREAMPLACE_STREAM>>>(
             density_map_tensor, buf_map, T(1.0 / scale_factor), num_bins);
 
         destroyCUDA(buf_map);
@@ -162,7 +162,7 @@ int computeDensityMapCudaLauncher(
         AtomicAddCUDA<T> atomic_add_op;
         int thread_count = 512;
         int block_count = ceilDiv(num_nodes, thread_count);
-        computeDensityMap<<<block_count, thread_count>>>(
+        computeDensityMap<<<block_count, thread_count, 0, DREAMPLACE_STREAM>>>(
             x_tensor, y_tensor, 
             node_size_x_tensor, node_size_y_tensor, 
             num_nodes, 

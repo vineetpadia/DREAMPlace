@@ -395,7 +395,7 @@ int computeTriangleDensityMapCallKernel(
   dim3 blockSize(2, 2, thread_count);
 
   int block_count = (num_nodes - 1 + thread_count) / thread_count;
-  computeTriangleDensityMap<<<block_count, blockSize>>>(
+  computeTriangleDensityMap<<<block_count, blockSize, 0, DREAMPLACE_STREAM>>>(
       x_tensor, y_tensor, node_size_x_clamped_tensor,
       node_size_y_clamped_tensor, offset_x_tensor, offset_y_tensor,
       ratio_tensor, bin_center_x_tensor, bin_center_y_tensor, num_nodes,
@@ -403,7 +403,7 @@ int computeTriangleDensityMapCallKernel(
       bin_size_x, bin_size_y, 1 / bin_size_x, 1 / bin_size_y, atomic_add_op,
       density_map_tensor, sorted_node_map);
 
-  // computeTriangleDensityMapSimpleLikeCPU<<<block_count, thread_count>>>(
+  // computeTriangleDensityMapSimpleLikeCPU<<<block_count, thread_count, 0, DREAMPLACE_STREAM>>>(
   //    x_tensor, y_tensor,
   //    node_size_x_clamped_tensor, node_size_y_clamped_tensor,
   //    offset_x_tensor, offset_y_tensor,
@@ -446,7 +446,7 @@ int computeTriangleDensityMapCudaLauncher(
 
     int thread_count = 512;
     copyScaleArray<<<(num_bins + thread_count - 1) / thread_count,
-                     thread_count>>>(
+                     thread_count, 0, DREAMPLACE_STREAM>>>(
         scaled_density_map_tensor, density_map_tensor, scale_factor, num_bins);
     computeTriangleDensityMapCallKernel<T, decltype(atomic_add_op)>(
         x_tensor, y_tensor, node_size_x_clamped_tensor,
@@ -456,7 +456,7 @@ int computeTriangleDensityMapCudaLauncher(
         yl, xh, yh, bin_size_x, bin_size_y, atomic_add_op,
         scaled_density_map_tensor, sorted_node_map);
     copyScaleArray<<<(num_bins + thread_count - 1) / thread_count,
-                     thread_count>>>(density_map_tensor,
+                     thread_count, 0, DREAMPLACE_STREAM>>>(density_map_tensor,
                                      scaled_density_map_tensor,
                                      T(1.0 / scale_factor), num_bins);
 
@@ -490,7 +490,7 @@ int computeExactDensityMapCallKernel(
   // dreamplaceAssert(block_count >= 0); // avoid overflow 
   int block_count = (num_nodes - 1 + thread_count) / thread_count;
 
-  computeExactDensityMapCellByCell<<<block_count, thread_count>>>(
+  computeExactDensityMapCellByCell<<<block_count, thread_count, 0, DREAMPLACE_STREAM>>>(
       x_tensor, y_tensor, node_size_x_tensor, node_size_y_tensor,
       bin_center_x_tensor, bin_center_y_tensor, num_nodes, num_bins_x,
       num_bins_y, xl, yl, xh, yh, bin_size_x, bin_size_y, num_impacted_bins_x,
@@ -530,7 +530,7 @@ int computeExactDensityMapCudaLauncher(
 
     int thread_count = 512;
     copyScaleArray<<<(num_bins + thread_count - 1) / thread_count,
-                     thread_count>>>(
+                     thread_count, 0, DREAMPLACE_STREAM>>>(
         scaled_density_map_tensor, density_map_tensor, scale_factor, num_bins);
     computeExactDensityMapCallKernel<T, decltype(atomic_add_op)>(
         x_tensor, y_tensor, node_size_x_tensor, node_size_y_tensor,
@@ -539,7 +539,7 @@ int computeExactDensityMapCudaLauncher(
         bin_size_x, bin_size_y, fixed_node_flag, atomic_add_op,
         scaled_density_map_tensor);
     copyScaleArray<<<(num_bins + thread_count - 1) / thread_count,
-                     thread_count>>>(density_map_tensor,
+                     thread_count, 0, DREAMPLACE_STREAM>>>(density_map_tensor,
                                      scaled_density_map_tensor,
                                      T(1.0 / scale_factor), num_bins);
 

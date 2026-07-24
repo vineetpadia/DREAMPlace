@@ -40,7 +40,7 @@ int computePinPosCudaLauncher(
 {
 	int thread_count = 512;
 
-	computePinPos<<<(num_pins+thread_count-1) / thread_count, thread_count>>>(x, y, pin_offset_x, pin_offset_y, pin2node_map, num_pins, pin_x, pin_y);
+	computePinPos<<<(num_pins+thread_count-1) / thread_count, thread_count, 0, DREAMPLACE_STREAM>>>(x, y, pin_offset_x, pin_offset_y, pin2node_map, num_pins, pin_x, pin_y);
 
     return 0;
 }
@@ -89,7 +89,7 @@ int computePinPosGradCudaLauncher(
 {
     int thread_count = 512;
 
-    computeNodeGrad<<<(num_nodes + thread_count - 1) / thread_count, thread_count>>>(
+    computeNodeGrad<<<(num_nodes + thread_count - 1) / thread_count, thread_count, 0, DREAMPLACE_STREAM>>>(
             grad_out_x, 
             grad_out_y, 
             flat_node2pin_map, 

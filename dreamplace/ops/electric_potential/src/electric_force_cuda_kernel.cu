@@ -427,7 +427,7 @@ int computeElectricForceCudaLauncher(
   int block_count_nodes = ceilDiv(num_nodes, thread_count);
 
   if (deterministic_flag) {
-    computeElectricForceSimpleLikeCPU<<<block_count_nodes, thread_count>>>(
+    computeElectricForceSimpleLikeCPU<<<block_count_nodes, thread_count, 0, DREAMPLACE_STREAM>>>(
         num_bins_x, num_bins_y,
         num_impacted_bins_x, num_impacted_bins_y,
         field_map_x_tensor, field_map_y_tensor,
@@ -443,7 +443,7 @@ int computeElectricForceCudaLauncher(
   } else {
     dim3 blockSize(2, 2, thread_count);
     size_t shared_mem_size = sizeof(T) * thread_count * 2;
-    computeElectricForce<<<block_count_nodes, blockSize, shared_mem_size>>>(
+    computeElectricForce<<<block_count_nodes, blockSize, shared_mem_size, DREAMPLACE_STREAM>>>(
         num_bins_x, num_bins_y, field_map_x_tensor, field_map_y_tensor, x_tensor,
         y_tensor, node_size_x_clamped_tensor, node_size_y_clamped_tensor,
         offset_x_tensor, offset_y_tensor, ratio_tensor, bin_center_x_tensor,

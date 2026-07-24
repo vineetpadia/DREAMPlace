@@ -36,8 +36,8 @@ int computeWeightedAverageWirelengthCudaAtomicLauncher(
 
     if (grad_tensor)
     {
-        // computeWeightedAverageWirelengthGradInterleavePinByPin<<<block_count_pins, block_size>>>(
-        computeWeightedAverageWirelengthGradPinByPin<<<block_count_pins, thread_count>>>(
+        // computeWeightedAverageWirelengthGradInterleavePinByPin<<<block_count_pins, block_size, 0, DREAMPLACE_STREAM>>>(
+        computeWeightedAverageWirelengthGradPinByPin<<<block_count_pins, thread_count, 0, DREAMPLACE_STREAM>>>(
             x, y,
             exp_xy, exp_nxy,
             exp_xy_sum, exp_nxy_sum,
@@ -54,8 +54,8 @@ int computeWeightedAverageWirelengthCudaAtomicLauncher(
     {
         #if 0
         // compute max and min in one kernel (pin by pin)
-        // computeMaxMinInterleavePinByPin<<<block_count_pins, block_size>>>(
-        computeMaxMinPinByPin<<<block_count_pins, thread_count>>>(
+        // computeMaxMinInterleavePinByPin<<<block_count_pins, block_size, 0, DREAMPLACE_STREAM>>>(
+        computeMaxMinPinByPin<<<block_count_pins, thread_count, 0, DREAMPLACE_STREAM>>>(
             x, y,
             pin2net_map,
             net_mask,
@@ -65,8 +65,8 @@ int computeWeightedAverageWirelengthCudaAtomicLauncher(
             xy_min);
         #else
         // compute max and min in one kernel (net by net)
-        computeMaxMinInterleaveNetByNet<<<block_count_nets, block_size>>>(
-        // computeMaxMinNetByNet<<<block_count_nets, thread_count>>>(
+        computeMaxMinInterleaveNetByNet<<<block_count_nets, block_size, 0, DREAMPLACE_STREAM>>>(
+        // computeMaxMinNetByNet<<<block_count_nets, thread_count, 0, DREAMPLACE_STREAM>>>(
             x, y,
             flat_netpin,
             netpin_start,
@@ -79,8 +79,8 @@ int computeWeightedAverageWirelengthCudaAtomicLauncher(
         #if 1
         // compute plus-minus exp, sum of plus-minus exp, sum of x*exp in one CUDA kernels (pin by pin)
         // corresponding to the plus and minus a b c kernels in the DREAMPlace paper
-        // computeABCKernelsInterleavePinByPin<<<block_count_pins, block_size>>>(
-        computeABCKernelsPinByPin<<<block_count_pins, thread_count>>>(
+        // computeABCKernelsInterleavePinByPin<<<block_count_pins, block_size, 0, DREAMPLACE_STREAM>>>(
+        computeABCKernelsPinByPin<<<block_count_pins, thread_count, 0, DREAMPLACE_STREAM>>>(
             // pos,
             x, y, 
             pin2net_map,
@@ -94,7 +94,7 @@ int computeWeightedAverageWirelengthCudaAtomicLauncher(
             xyexp_xy_sum, xyexp_nxy_sum);        
         
         // compute partial wirelength
-        computeXExpSumByExpSumXY<<<block_count_nets, thread_count>>>(
+        computeXExpSumByExpSumXY<<<block_count_nets, thread_count, 0, DREAMPLACE_STREAM>>>(
             xyexp_xy_sum, xyexp_nxy_sum,
             exp_xy_sum, exp_nxy_sum,
             pin2net_map,
@@ -105,8 +105,8 @@ int computeWeightedAverageWirelengthCudaAtomicLauncher(
         // compute plus-minus exp, sum of plus-minus exp, sum of x*exp in one CUDA kernels (net by net)
         // corresponding to the plus and minus a b c kernels in the DREAMPlace paper
         // compute partial wirelength at the same time
-        // computeABCKernelsInterleaveAndWLNetByNet<<<block_count_nets, block_size>>>(
-        computeABCKernelsAndWLNetByNet<<<block_count_nets, thread_count>>>(
+        // computeABCKernelsInterleaveAndWLNetByNet<<<block_count_nets, block_size, 0, DREAMPLACE_STREAM>>>(
+        computeABCKernelsAndWLNetByNet<<<block_count_nets, thread_count, 0, DREAMPLACE_STREAM>>>(
             pos,
             flat_netpin,
             netpin_start,
@@ -124,7 +124,7 @@ int computeWeightedAverageWirelengthCudaAtomicLauncher(
         
         // Yibo: move out the summation to use ATen
         // significant speedup is observed
-        //sumArray<<<1, 1>>>(partial_wl, num_nets, wl);
+        //sumArray<<<1, 1, 0, DREAMPLACE_STREAM>>>(partial_wl, num_nets, wl);
     }
 
     return 0;

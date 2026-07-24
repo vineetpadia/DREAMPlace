@@ -32,8 +32,8 @@ int computeWeightedAverageWirelengthCudaLauncher(
 
     if (grad_tensor)
     {
-        // computeWeightedAverageWirelengthGradInterleaveNetByNet<<<block_count_pins, block_size>>>(
-        computeWeightedAverageWirelengthGradNetByNet<<<block_count_pins, thread_count>>>(
+        // computeWeightedAverageWirelengthGradInterleaveNetByNet<<<block_count_pins, block_size, 0, DREAMPLACE_STREAM>>>(
+        computeWeightedAverageWirelengthGradNetByNet<<<block_count_pins, thread_count, 0, DREAMPLACE_STREAM>>>(
             x, y,
             exp_xy, exp_nxy,
             exp_xy_sum, exp_nxy_sum,
@@ -50,8 +50,8 @@ int computeWeightedAverageWirelengthCudaLauncher(
     else
     {   
         // compute max and min in one kernel (net by net)
-        // computeMaxMinInterleaveNetByNet<<<block_count_nets, block_size>>>(
-        computeMaxMinNetByNet<<<block_count_nets, thread_count>>>(
+        // computeMaxMinInterleaveNetByNet<<<block_count_nets, block_size, 0, DREAMPLACE_STREAM>>>(
+        computeMaxMinNetByNet<<<block_count_nets, thread_count, 0, DREAMPLACE_STREAM>>>(
             x, y,
             flat_netpin,
             netpin_start,
@@ -63,8 +63,8 @@ int computeWeightedAverageWirelengthCudaLauncher(
         // compute plus-minus exp, sum of plus-minus exp, sum of x*exp in one CUDA kernels (net by net)
         // corresponding to the plus and minus a b c kernels in the DREAMPlace paper
         // compute partial wirelength at the same time
-        computeABCKernelsInterleaveAndWLNetByNet<<<block_count_nets, block_size>>>(
-        // computeABCKernelsAndWLNetByNet<<<block_count_nets, thread_count>>>(
+        computeABCKernelsInterleaveAndWLNetByNet<<<block_count_nets, block_size, 0, DREAMPLACE_STREAM>>>(
+        // computeABCKernelsAndWLNetByNet<<<block_count_nets, thread_count, 0, DREAMPLACE_STREAM>>>(
             x,
             flat_netpin,
             netpin_start,
