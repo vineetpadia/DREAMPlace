@@ -82,9 +82,11 @@ class ElectricDensityMapFunction(Function):
         num_filler_impacted_bins_x,
         num_filler_impacted_bins_y,
         deterministic_flag,
-        sorted_node_map):
+        sorted_node_map,
+        overflow_target_area=None):
 
         if pos.is_cuda:
+            fuse_overflow = overflow_target_area is not None and padding == 0
             output = electric_potential_cuda.density_map(
                 pos.view(pos.numel()), node_size_x_clamped,
                 node_size_y_clamped, offset_x, offset_y, ratio, bin_center_x,
@@ -93,9 +95,12 @@ class ElectricDensityMapFunction(Function):
                 num_filler_nodes, padding, num_bins_x, num_bins_y,
                 num_movable_impacted_bins_x, num_movable_impacted_bins_y,
                 num_filler_impacted_bins_x, num_filler_impacted_bins_y,
-                deterministic_flag, sorted_node_map)
+                deterministic_flag, sorted_node_map,
+                overflow_target_area if fuse_overflow else -1.0)
+            density_map = output[0].view([num_bins_x, num_bins_y])
+            overflow_map = output[1] if fuse_overflow else None
         else:
-            output = electric_potential_cpp.density_map(
+            density_map = electric_potential_cpp.density_map(
                 pos.view(pos.numel()), node_size_x_clamped,
                 node_size_y_clamped, offset_x, offset_y, ratio, bin_center_x,
                 bin_center_y, initial_density_map, target_density, xl, yl, xh,
@@ -103,13 +108,26 @@ class ElectricDensityMapFunction(Function):
                 num_filler_nodes, padding, num_bins_x, num_bins_y,
                 num_movable_impacted_bins_x, num_movable_impacted_bins_y,
                 num_filler_impacted_bins_x, num_filler_impacted_bins_y,
-                deterministic_flag)
+                deterministic_flag).view([num_bins_x, num_bins_y])
+            overflow_map = None
 
-        density_map = output.view([num_bins_x, num_bins_y])
         # set padding density
         if padding > 0:
             density_map.masked_fill_(padding_mask,
                                      target_density * bin_size_x * bin_size_y)
+
+        if overflow_target_area is not None:
+            if overflow_map is None:
+                if density_map.is_cuda:
+                    overflow_map = (
+                        electric_potential_cuda.density_overflow_map(
+                            density_map, overflow_target_area)
+                    )
+                else:
+                    overflow_map = (
+                        density_map - overflow_target_area
+                    ).clamp_(min=0.0)
+            return density_map, overflow_map
 
         return density_map
 
@@ -261,7 +279,9 @@ class ElectricOverflow(nn.Module):
         if self.initial_density_map is None:
             self.compute_initial_density_map(pos)
 
-        density_map = ElectricDensityMapFunction.forward(
+        bin_area = self.bin_size_x * self.bin_size_y
+        target_area = self.target_density * bin_area
+        density_map, overflow_map = ElectricDensityMapFunction.forward(
             pos, self.node_size_x_clamped, self.node_size_y_clamped,
             self.offset_x, self.offset_y, self.ratio, self.bin_center_x,
             self.bin_center_y, self.initial_density_map, self.target_density,
@@ -270,14 +290,8 @@ class ElectricOverflow(nn.Module):
             self.padding, self.padding_mask, self.num_bins_x, self.num_bins_y,
             self.num_movable_impacted_bins_x, self.num_movable_impacted_bins_y,
             self.num_filler_impacted_bins_x, self.num_filler_impacted_bins_y,
-            self.deterministic_flag, self.sorted_node_map)
-        bin_area = self.bin_size_x * self.bin_size_y
-        target_area = self.target_density * bin_area
-        if density_map.is_cuda:
-            overflow_map = electric_potential_cuda.density_overflow_map(
-                density_map, target_area)
-        else:
-            overflow_map = (density_map - target_area).clamp_(min=0.0)
+            self.deterministic_flag, self.sorted_node_map,
+            overflow_target_area=target_area)
         density_cost = overflow_map.sum().unsqueeze(0)
 
         return density_cost, density_map.max().unsqueeze(0) / bin_area

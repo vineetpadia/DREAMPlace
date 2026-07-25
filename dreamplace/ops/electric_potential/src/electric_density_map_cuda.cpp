@@ -24,7 +24,8 @@ int computeTriangleDensityMapCudaLauncher(
     T* density_map_tensor, const T* density_map_input_tensor,
     const int* sorted_node_map,
     unsigned long long int* deterministic_workspace,
-    bool requantize_workspace, bool finalize_output);
+    bool requantize_workspace, bool finalize_output,
+    T* overflow_map_tensor, T overflow_target_area);
 
 // The exact density model
 // Compute the exact overlap area for density
@@ -75,7 +76,7 @@ void densityOverflowMapCudaLauncher(
 /// @param num_filler_impacted_bins_y number of impacted bins for any filler
 /// cell in y direction
 /// @param sorted_node_map the indices of the movable node map
-at::Tensor density_map(
+std::vector<at::Tensor> density_map(
     at::Tensor pos, at::Tensor node_size_x_clamped,
     at::Tensor node_size_y_clamped, at::Tensor offset_x, at::Tensor offset_y,
     at::Tensor ratio, at::Tensor bin_center_x, at::Tensor bin_center_y,
@@ -85,7 +86,7 @@ at::Tensor density_map(
     int num_bins_y, int num_movable_impacted_bins_x,
     int num_movable_impacted_bins_y, int num_filler_impacted_bins_x,
     int num_filler_impacted_bins_y, int deterministic_flag,
-    at::Tensor sorted_node_map) {
+    at::Tensor sorted_node_map, double overflow_target_area) {
   CHECK_FLAT_CUDA(pos);
   CHECK_EVEN(pos);
   CHECK_CONTIGUOUS(pos);
@@ -98,6 +99,9 @@ at::Tensor density_map(
       deterministic_flag && has_nodes
           ? at::empty(initial_density_map.sizes(), initial_density_map.options())
           : initial_density_map.clone();
+  bool compute_overflow = overflow_target_area >= 0;
+  at::Tensor overflow_map =
+      compute_overflow ? at::empty_like(density_map) : at::Tensor();
   int num_nodes = pos.numel() / 2;
 
   // Use the caching allocator once per density evaluation instead of
@@ -138,7 +142,11 @@ at::Tensor density_map(
             DREAMPLACE_TENSOR_DATA_PTR(density_map, scalar_t),
             DREAMPLACE_TENSOR_DATA_PTR(initial_density_map, scalar_t),
             DREAMPLACE_TENSOR_DATA_PTR(sorted_node_map, int),
-            deterministic_workspace_ptr, false, !num_filler_nodes);
+            deterministic_workspace_ptr, false, !num_filler_nodes,
+            compute_overflow
+                ? DREAMPLACE_TENSOR_DATA_PTR(overflow_map, scalar_t)
+                : nullptr,
+            static_cast<scalar_t>(overflow_target_area));
       });
   }
 
@@ -169,11 +177,26 @@ at::Tensor density_map(
                   ? DREAMPLACE_TENSOR_DATA_PTR(density_map, scalar_t)
                   : DREAMPLACE_TENSOR_DATA_PTR(initial_density_map, scalar_t),
               NULL,
-              deterministic_workspace_ptr, (bool)num_movable_nodes, true);
+              deterministic_workspace_ptr, (bool)num_movable_nodes, true,
+              compute_overflow
+                  ? DREAMPLACE_TENSOR_DATA_PTR(overflow_map, scalar_t)
+                  : nullptr,
+              static_cast<scalar_t>(overflow_target_area));
         });
   }
 
-  return density_map;
+  if (compute_overflow && !(deterministic_flag && has_nodes)) {
+    DREAMPLACE_DISPATCH_FLOATING_TYPES(
+        density_map, "densityOverflowMapCudaLauncher", [&] {
+          densityOverflowMapCudaLauncher<scalar_t>(
+              DREAMPLACE_TENSOR_DATA_PTR(density_map, scalar_t),
+              static_cast<scalar_t>(overflow_target_area),
+              DREAMPLACE_TENSOR_DATA_PTR(overflow_map, scalar_t),
+              density_map.numel());
+        });
+  }
+
+  return {density_map, overflow_map};
 }
 
 /// @brief compute density map for fixed cells

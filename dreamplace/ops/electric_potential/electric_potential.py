@@ -547,7 +547,9 @@ class ElectricPotential(ElectricOverflow):
                 self.fast_mode)
         elif(mode == "overflow"):
             ### num_filler_nodes is set 0
-            density_map = ElectricDensityMapFunction.forward(
+            bin_area = self.bin_size_x * self.bin_size_y
+            target_area = self.target_density * bin_area
+            density_map, overflow_map = ElectricDensityMapFunction.forward(
                 pos, self.node_size_x_clamped, self.node_size_y_clamped,
                 self.offset_x, self.offset_y, self.ratio, self.bin_center_x,
                 self.bin_center_y, self.initial_density_map, self.target_density,
@@ -556,15 +558,8 @@ class ElectricPotential(ElectricOverflow):
                 self.padding, self.padding_mask, self.num_bins_x, self.num_bins_y,
                 self.num_movable_impacted_bins_x, self.num_movable_impacted_bins_y,
                 self.num_filler_impacted_bins_x, self.num_filler_impacted_bins_y,
-                self.deterministic_flag, self.sorted_node_map)
-
-            bin_area = self.bin_size_x * self.bin_size_y
-            target_area = self.target_density * bin_area
-            if density_map.is_cuda:
-                overflow_map = electric_potential_cuda.density_overflow_map(
-                    density_map, target_area)
-            else:
-                overflow_map = (density_map - target_area).clamp_(min=0.0)
+                self.deterministic_flag, self.sorted_node_map,
+                overflow_target_area=target_area)
             density_cost = overflow_map.sum()
 
             return density_cost, density_map.max() / bin_area

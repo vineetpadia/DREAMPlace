@@ -467,6 +467,20 @@ __global__ void requantizeDensityMap(
 }
 
 template <typename T>
+__global__ void copyScaleOverflowArray(
+    T *density_map, T *overflow_map,
+    const unsigned long long int *scaled_density_map, T inv_scale_factor,
+    T target_area, int num_bins) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < num_bins) {
+    T density = static_cast<T>(scaled_density_map[i]) * inv_scale_factor;
+    T overflow = density - target_area;
+    density_map[i] = density;
+    overflow_map[i] = overflow < T(0) ? T(0) : overflow;
+  }
+}
+
+template <typename T>
 int computeTriangleDensityMapCudaLauncher(
     const T *x_tensor, const T *y_tensor, const T *node_size_x_clamped_tensor,
     const T *node_size_y_clamped_tensor, const T *offset_x_tensor,
@@ -478,7 +492,8 @@ int computeTriangleDensityMapCudaLauncher(
     T *density_map_tensor, const T *density_map_input_tensor,
     const int *sorted_node_map,
     unsigned long long int *deterministic_workspace,
-    bool requantize_workspace, bool finalize_output) {
+    bool requantize_workspace, bool finalize_output,
+    T *overflow_map_tensor, T overflow_target_area) {
   if (deterministic_flag)  // deterministic implementation using unsigned long
                            // as fixed point number
   {
@@ -521,10 +536,19 @@ int computeTriangleDensityMapCudaLauncher(
         yl, xh, yh, bin_size_x, bin_size_y, atomic_add_op,
         scaled_density_map_tensor, sorted_node_map);
     if (finalize_output) {
-      copyScaleArray<<<(num_bins + thread_count - 1) / thread_count,
-                       thread_count, 0, DREAMPLACE_STREAM>>>(
-          density_map_tensor, scaled_density_map_tensor,
-          T(1.0 / scale_factor), num_bins);
+      if (overflow_map_tensor) {
+        copyScaleOverflowArray
+            <<<(num_bins + thread_count - 1) / thread_count,
+               thread_count, 0, DREAMPLACE_STREAM>>>(
+                density_map_tensor, overflow_map_tensor,
+                scaled_density_map_tensor, T(1.0 / scale_factor),
+                overflow_target_area, num_bins);
+      } else {
+        copyScaleArray<<<(num_bins + thread_count - 1) / thread_count,
+                         thread_count, 0, DREAMPLACE_STREAM>>>(
+            density_map_tensor, scaled_density_map_tensor,
+            T(1.0 / scale_factor), num_bins);
+      }
     }
 
     if (owns_workspace) {
@@ -659,7 +683,8 @@ void densityOverflowMapCudaLauncher(
       const T bin_size_y, bool deterministic_flag, T *density_map_tensor,      \
       const T *density_map_input_tensor, const int *sorted_node_map,            \
       unsigned long long int *deterministic_workspace,                          \
-      bool requantize_workspace, bool finalize_output);                         \
+      bool requantize_workspace, bool finalize_output, T *overflow_map_tensor,  \
+      T overflow_target_area);                                                  \
                                                                                \
   template int computeExactDensityMapCudaLauncher<T>(                          \
       const T *x_tensor, const T *y_tensor, const T *node_size_x_tensor,       \
