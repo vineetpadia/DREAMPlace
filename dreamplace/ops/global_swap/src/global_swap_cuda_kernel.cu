@@ -755,15 +755,14 @@ __global__ void check_candidate_costs(DetailedPlaceDB<T> db,
 template <typename T>
 __global__ void __launch_bounds__(64 * 4, 4)
     compute_candidate_cost(DetailedPlaceDB<T> db, SwapState<T> state) {
-  extern __shared__ unsigned char cost_proxy[];
-  T* cost = reinterpret_cast<T*>(cost_proxy);
   int num_candidates = state.max_num_candidates_all << 2;
-  for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < num_candidates;
-       i += blockDim.x * gridDim.x) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < num_candidates) {
     SwapCandidate<T>& cand = state.candidates[i >> 2];
     int node_id_flag = ((threadIdx.x & 2) >> 1);
     int offset = (threadIdx.x & 1);
     int skip_node_id = cand.node_id[0] + INT_MIN * (!node_id_flag);
+    T lane_cost = 0;
     if (cand.node_id[0] < db.num_movable_nodes &&
         cand.node_id[1] < db.num_movable_nodes) {
       int cost1 =
@@ -788,17 +787,17 @@ __global__ void __launch_bounds__(64 * 4, 4)
                     cand.node_id[!node_id_flag],
                     cand.node_xl[!node_id_flag][offset],
                     cand.node_yl[!node_id_flag][offset], skip_node_id);
-      cost[threadIdx.x] = cost1;
-    } else {
-      cost[threadIdx.x] = 0;
+      lane_cost = static_cast<T>(cost1);
     }
-  }
-  __syncthreads();
-  for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < num_candidates;
-       i += blockDim.x * gridDim.x) {
-    SwapCandidate<T>& cand = state.candidates[i >> 2];
+
+    unsigned int active_mask = __activemask();
+    T previous_cost1 =
+        __shfl_up_sync(active_mask, lane_cost, 1, 4);
+    T previous_cost2 =
+        __shfl_up_sync(active_mask, lane_cost, 2, 4);
+    T previous_cost3 =
+        __shfl_up_sync(active_mask, lane_cost, 3, 4);
     if ((threadIdx.x & 3) == 3)
-    // if (threadIdx.x&1)
     {
       // consider FENCE region
       if (db.num_regions &&
@@ -811,9 +810,8 @@ __global__ void __launch_bounds__(64 * 4, 4)
         cand.cost = DREAMPLACE_CUDA_NAMESPACE::numeric_limits<T>::max();
       } else {
         // target_cost - orig_cost
-        // cand.cost += cost[threadIdx.x]-cost[threadIdx.x-1];
-        cand.cost = cost[threadIdx.x] - cost[threadIdx.x - 1] +
-                    cost[threadIdx.x - 2] - cost[threadIdx.x - 3];
+        cand.cost = lane_cost - previous_cost1 +
+                    previous_cost2 - previous_cost3;
       }
     }
   }
@@ -1096,8 +1094,8 @@ void global_swap(DetailedPlaceDB<T>& db, SwapState<T>& state)
 #endif
     // compute_candidate_position<<<(state.max_num_candidates_all/256),
     // 256>>>(db, state);
-    compute_candidate_cost<<<ceilDiv(state.max_num_candidates_all, 64), 64 * 4,
-                             64 * 4 * sizeof(T)>>>(db, state);
+    compute_candidate_cost<<<ceilDiv(state.max_num_candidates_all, 64),
+                             64 * 4>>>(db, state);
 #ifdef TIMER
     checkCUDA(cudaDeviceSynchronize());
     timer_stop = CPUTimer::getGlobaltime();
