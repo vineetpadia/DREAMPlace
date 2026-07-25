@@ -391,10 +391,8 @@ __global__ void computeElectricForceSimpleLikeCPU(
     bin_index_yh = DREAMPLACE_STD_NAMESPACE::min(bin_index_yh, num_bins_y);
     // int bin_index_yh = bin_index_yl+num_impacted_bins_y;
 
-    T &gx = grad_x_tensor[i];
-    T &gy = grad_y_tensor[i];
-    gx = 0;
-    gy = 0;
+    T gx = 0;
+    T gy = 0;
     // update density potential map
     for (int k = bin_index_xl; k < bin_index_xh; ++k) {
       T px = triangle_density_function(node_x, node_size_x, xl, k, bin_size_x);
@@ -408,8 +406,8 @@ __global__ void computeElectricForceSimpleLikeCPU(
         gy += area * field_map_y_tensor[idx];
       }
     }
-    gx *= ratio;
-    gy *= ratio;
+    grad_x_tensor[i] = gx * ratio;
+    grad_y_tensor[i] = gy * ratio;
   }
 }
 
