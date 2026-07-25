@@ -896,11 +896,21 @@ class PlaceObj(nn.Module):
         def update_density_weight_op_hpwl(cur_metric, prev_metric, iteration):
             ### based on hpwl
             with torch.no_grad():
-                delta_hpwl = cur_metric.hpwl - prev_metric.hpwl
-                if delta_hpwl < 0:
+                cur_hpwl = cur_metric.get_cached_scalar("hpwl")
+                prev_hpwl = prev_metric.get_cached_scalar("hpwl")
+                delta_hpwl = None
+                if cur_hpwl is not None and prev_hpwl is not None:
+                    delta_hpwl_value = cur_hpwl - prev_hpwl
+                else:
+                    delta_hpwl = cur_metric.hpwl - prev_metric.hpwl
+                    delta_hpwl_value = delta_hpwl.item()
+
+                if delta_hpwl_value < 0:
                     mu = UPPER_PCOF * np.maximum(
                         np.power(0.9999, float(iteration)), 0.98)
                 else:
+                    if delta_hpwl is None:
+                        delta_hpwl = cur_metric.hpwl - prev_metric.hpwl
                     mu = UPPER_PCOF * torch.pow(
                         UPPER_PCOF, -delta_hpwl / ref_hpwl).clamp(
                             min=LOWER_PCOF, max=UPPER_PCOF)

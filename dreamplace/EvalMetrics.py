@@ -50,6 +50,10 @@ class EvalMetrics (object):
             )
         return self._scalar_cache[key]
 
+    def get_cached_scalar(self, name, index=None):
+        """Return a previously transferred metric scalar, if available."""
+        return self._scalar_cache.get((name, index))
+
     def __str__(self):
         """
         @brief convert to string
