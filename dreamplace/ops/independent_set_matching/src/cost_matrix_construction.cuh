@@ -315,18 +315,35 @@ __global__ void check_cost_matrices_kernel(IndependentSetMatchingStateType state
     }
 }
 
-template <typename T, int Threads>
+template <int Threads>
 __global__ void reduce_cost_matrix_max_kernel(
-        const T* __restrict__ cost_matrices,
-        T* __restrict__ max_costs,
+        const int* __restrict__ cost_matrices,
+        int* __restrict__ max_costs,
         int cost_matrix_size)
 {
     int i = blockIdx.x;
-    const T* cost_matrix = cost_matrices + i*cost_matrix_size;
-    T max_cost = 0;
-    for (int j = threadIdx.x; j < cost_matrix_size; j += blockDim.x)
+    const int* cost_matrix = cost_matrices + i*cost_matrix_size;
+    int max_cost = 0;
+    if (cost_matrix_size % 4 == 0)
     {
-        max_cost = max(max_cost, cost_matrix[j]);
+        const int4* cost_matrix4 =
+            reinterpret_cast<const int4*>(cost_matrix);
+        for (int j = threadIdx.x; j < cost_matrix_size / 4;
+                j += blockDim.x)
+        {
+            int4 costs = cost_matrix4[j];
+            max_cost = max(max_cost, costs.x);
+            max_cost = max(max_cost, costs.y);
+            max_cost = max(max_cost, costs.z);
+            max_cost = max(max_cost, costs.w);
+        }
+    }
+    else
+    {
+        for (int j = threadIdx.x; j < cost_matrix_size; j += blockDim.x)
+        {
+            max_cost = max(max_cost, cost_matrix[j]);
+        }
     }
 
     unsigned int active_mask = __activemask();
@@ -336,7 +353,7 @@ __global__ void reduce_cost_matrix_max_kernel(
             max_cost, __shfl_down_sync(active_mask, max_cost, offset));
     }
 
-    __shared__ T warp_max_costs[Threads/32];
+    __shared__ int warp_max_costs[Threads/32];
     int lane = threadIdx.x & 31;
     int warp = threadIdx.x >> 5;
     if (lane == 0)
@@ -376,8 +393,7 @@ void cost_matrix_construction(const DetailedPlaceDBType& db, IndependentSetMatch
 #endif
 
     constexpr int threads = 512;
-    reduce_cost_matrix_max_kernel<
-        typename IndependentSetMatchingStateType::cost_type, threads>
+    reduce_cost_matrix_max_kernel<threads>
         <<<state.num_independent_sets, threads>>>(
             state.cost_matrices, state.max_costs,
             state.cost_matrix_size);
