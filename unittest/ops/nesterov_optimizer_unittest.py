@@ -18,7 +18,7 @@ class NesterovOptimizerTest(unittest.TestCase):
 
         def objective_and_gradient(candidate):
             if candidate.grad is not None:
-                candidate.grad.zero_()
+                candidate.grad = None
             weights = candidate.new_tensor([1.0, 2.0, 3.0, 5.0])
             objective = (candidate.square() * weights * 0.5).sum()
             objective.backward()

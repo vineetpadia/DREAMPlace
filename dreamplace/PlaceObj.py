@@ -416,7 +416,9 @@ class PlaceObj(nn.Module):
         """
         #self.check_gradient(pos)
         if pos.grad is not None:
-            pos.grad.zero_()
+            # Let autograd install the first incoming gradient instead of
+            # clearing and then adding into the retained leaf buffer.
+            pos.grad = None
         obj = self.obj_fn(pos)
 
         if obj.requires_grad:
@@ -1195,4 +1197,3 @@ class PlaceObj(nn.Module):
 
         self.op_collections.fence_region_density_overflow_merged_op = merged_density_overflow_op
         return self.op_collections.fence_region_density_ops, self.op_collections.fence_region_density_merged_op, self.op_collections.fence_region_density_overflow_merged_op
-
