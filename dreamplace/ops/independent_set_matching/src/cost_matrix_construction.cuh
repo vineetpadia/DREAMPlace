@@ -9,6 +9,7 @@ DREAMPLACE_BEGIN_NAMESPACE
 
 #define MAX_NODE_DEGREE 32
 constexpr int kCostMatrixRowsPerBlock = 2;
+constexpr int kPostprocessRowsPerBlock = 4;
 
 template <typename DetailedPlaceDBType, typename IndependentSetMatchingStateType>
 __global__ void print_net_boxes_kernel(DetailedPlaceDBType db, IndependentSetMatchingStateType state)
@@ -222,28 +223,32 @@ template <typename DetailedPlaceDBType, typename IndependentSetMatchingStateType
 __global__ void postprocess_cost_matrix_kernel(DetailedPlaceDBType db, IndependentSetMatchingStateType state)
 {
     int i = blockIdx.y; // set 
-    int j = blockIdx.x; // node in set 
     const int* __restrict__ independent_set = state.independent_sets + i*state.set_size; 
-    auto cost_matrix = state.cost_matrices + i*state.cost_matrix_size + j*state.set_size; 
     auto max_cost = state.max_costs[i];
     for (int k = threadIdx.x; k < state.set_size; k += blockDim.x) // pos in set 
     {
-        int node_id = independent_set[j]; 
         int pos_id = independent_set[k]; 
-        auto& cost = cost_matrix[k]; // row major 
-        if (node_id < db.num_movable_nodes && pos_id < db.num_movable_nodes)
+        int j_end = min(
+            (blockIdx.x + 1) * kPostprocessRowsPerBlock, state.set_size);
+        for (int j = blockIdx.x * kPostprocessRowsPerBlock; j < j_end; ++j)
         {
-            if (cost >= 0)
+            int node_id = independent_set[j];
+            auto& cost = state.cost_matrices[
+                i*state.cost_matrix_size + j*state.set_size + k];
+            if (node_id < db.num_movable_nodes && pos_id < db.num_movable_nodes)
             {
-                cost = max_cost - cost; 
+                if (cost >= 0)
+                {
+                    cost = max_cost - cost;
+                }
+                // cost < 0 is already assigned to negative
             }
-            // cost < 0 is already assigned to negative  
+            else if (j == k)
+            {
+                cost = max_cost; // dummy cells or positions
+            }
+            // j != k is already assigned to negative
         }
-        else if (j == k)
-        {
-            cost = max_cost; // dummy cells or positions 
-        }
-        // j != k is already assigned to negative 
     }
 }
 
@@ -362,7 +367,9 @@ void cost_matrix_construction(const DetailedPlaceDBType& db, IndependentSetMatch
     dim3 compute_grid(
         ceilDiv(state.set_size, kCostMatrixRowsPerBlock),
         state.num_independent_sets, 1);
-    dim3 grid (state.set_size, state.num_independent_sets, 1);
+    dim3 postprocess_grid(
+        ceilDiv(state.set_size, kPostprocessRowsPerBlock),
+        state.num_independent_sets, 1);
     compute_cost_matrix_kernel<<<compute_grid, state.set_size>>>(db, state);
 #ifdef DEBUG
     //print_cost_matrix_kernel<<<1, 1>>>(state.cost_matrices + state.cost_matrix_size*3, state.set_size);
@@ -376,7 +383,8 @@ void cost_matrix_construction(const DetailedPlaceDBType& db, IndependentSetMatch
             state.cost_matrix_size);
 
     constexpr int postprocess_threads = 64;
-    postprocess_cost_matrix_kernel<<<grid, postprocess_threads>>>(db, state);
+    postprocess_cost_matrix_kernel<<<postprocess_grid, postprocess_threads>>>(
+        db, state);
 #ifdef DEBUG
     //print_max_cost_kernel<<<1, 1>>>(state);
 
