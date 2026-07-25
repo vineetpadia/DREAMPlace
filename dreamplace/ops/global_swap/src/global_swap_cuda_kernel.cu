@@ -1066,7 +1066,9 @@ void global_swap(DetailedPlaceDB<T>& db, SwapState<T>& state)
 #ifdef TIMER
     timer_start = CPUTimer::getGlobaltime();
 #endif
-    reset_state<<<ceilDiv(db.num_movable_nodes, 512), 512>>>(db, state);
+    constexpr int reset_threads = 256;
+    reset_state<<<ceilDiv(db.num_movable_nodes, reset_threads),
+                  reset_threads>>>(db, state);
     dim3 grid(5, (idx_end - idx_bgn), 1);
     collect_candidates<<<grid, 32>>>(db, state, idx_bgn, idx_end);
 #ifdef TIMER
