@@ -74,7 +74,6 @@ struct KReorderState {
                                                           ///< sequence of at
                                                           ///< most K cells to
                                                           ///< be solved.
-  T* costs;              ///< maximum reorder_instances.size2 * num_permutations
   InstanceNet<T>*
       instance_nets;  ///< reorder_instances.size2 * MAX_NUM_NETS_PER_INSTANCE
   int* instance_nets_size;      ///< reorder_instances.size2, number of nets for
@@ -348,17 +347,6 @@ inline __device__ typename DetailedPlaceDBType::type compute_reorder_cost(
   if (valid_flag) {
     compute_position(db, state, inst, permute_id, target_x, target_sizes);
 
-    // state.costs[i] = compute_instance_hpwl(
-    //        db,
-    //        state,
-    //        inst,
-    //        permute_id,
-    //        row2nodes,
-    //        K,
-    //        target_x,
-    //        target_sizes
-    //        );
-
     cost = 0;
     // consider FENCE region
     if (db.num_regions) {
@@ -397,20 +385,6 @@ inline __device__ typename DetailedPlaceDBType::type compute_reorder_cost(
     }
   }
   return cost;
-}
-
-template <typename DetailedPlaceDBType, typename StateType>
-__global__ void compute_reorder_hpwl(DetailedPlaceDBType db, StateType state,
-                                     int group_id,
-                                     int group_size_with_permutation,
-                                     int offset) {
-  for (int i = blockIdx.x * blockDim.x + threadIdx.x;
-       i < group_size_with_permutation; i += blockDim.x * gridDim.x) {
-    int inst_id = i / state.num_permutations;
-    int permute_id = i - inst_id * state.num_permutations;
-    state.costs[i] = compute_reorder_cost(
-        db, state, group_id, inst_id, permute_id, offset);
-  }
 }
 
 template <typename T>
@@ -504,45 +478,6 @@ __global__ void compute_reorder_hpwl_reduce_and_apply(
        col += ThreadsPerBlock) {
     T cost =
         compute_reorder_cost(db, state, group_id, inst_id, col, offset);
-    if (cost < thread_data.value) {
-      thread_data.value = cost;
-      thread_data.index = col;
-    }
-  }
-
-  ItemWithIndex<T> aggregate =
-      BlockReduce(temp_storage).Reduce(
-          thread_data, ReduceMinOP<T>(), state.num_permutations);
-
-  if (threadIdx.x == 0) {
-    apply_reorder_instance(
-        db, state, group_id, inst_id, aggregate.index, offset);
-  }
-}
-
-template <
-    typename T,
-    int ThreadsPerBlock,
-    typename DetailedPlaceDBType,
-    typename StateType>
-__global__ void reduce_min_and_apply_reorder(
-    DetailedPlaceDBType db, StateType state, int group_id,
-    int group_size, int offset) {
-  typedef cub::BlockReduce<ItemWithIndex<T>, ThreadsPerBlock> BlockReduce;
-  __shared__ typename BlockReduce::TempStorage temp_storage;
-
-  int inst_id = blockIdx.x;
-  if (inst_id >= group_size) {
-    return;
-  }
-  const T* inst_costs =
-      state.costs + inst_id * state.num_permutations;
-  ItemWithIndex<T> thread_data;
-  thread_data.value = DREAMPLACE_CUDA_NAMESPACE::numeric_limits<T>::max();
-  thread_data.index = 0;
-  for (int col = threadIdx.x; col < state.num_permutations;
-       col += ThreadsPerBlock) {
-    T cost = inst_costs[col];
     if (cost < thread_data.value) {
       thread_data.value = cost;
       thread_data.index = col;
@@ -851,20 +786,6 @@ __global__ void unique_instance_nets(DetailedPlaceDB<T> db,
 }
 
 template <typename StateType>
-__global__ void print_costs(StateType state, int group_id, int offset) {
-  if (blockIdx.x == 0 && threadIdx.x == 0) {
-    printf("group_id %d, offset %d, %s\n", group_id, offset, __func__);
-    for (int i = 0; i < state.reorder_instances.size(group_id); ++i) {
-      printf("inst[%d][%d] costs: ", i, state.num_permutations);
-      for (int j = 0; j < state.num_permutations; ++j) {
-        printf("%g ", state.costs[i * state.num_permutations + j]);
-      }
-      printf("\n");
-    }
-  }
-}
-
-template <typename StateType>
 __global__ void print_instance_nets(StateType state, int group_id, int offset) {
   assert(blockDim.x == 1 && gridDim.x == 1);
   if (blockIdx.x == 0 && threadIdx.x == 0) {
@@ -1066,7 +987,6 @@ void k_reorder(
 #ifdef K_REORDER_PROFILE
         timer_start = TIMER::getGlobaltime();
 #endif
-        // print_costs<<<1, 1>>>(state, group_id, offset);
         compute_reorder_hpwl_reduce_and_apply<T, 32>
             <<<group_size, 32>>>(
                 db, state, group_id, group_size, offset);
@@ -1224,8 +1144,6 @@ int kreorderCUDALauncher(DetailedPlaceDB<T> db, int K, int max_iters,
     state.row2node_map.initialize(host_row2node_map);
     state.reorder_instances.initialize(host_reorder_instances);
 
-    allocateCUDA(state.costs,
-                 state.reorder_instances.size2 * state.num_permutations, T);
     allocateCUDA(state.instance_nets,
                  state.reorder_instances.size2 * MAX_NUM_NETS_PER_INSTANCE,
                  InstanceNet<T>);
@@ -1285,7 +1203,6 @@ int kreorderCUDALauncher(DetailedPlaceDB<T> db, int K, int max_iters,
     destroyCUDA(state.permutations);
     state.row2node_map.destroy();
     state.reorder_instances.destroy();
-    destroyCUDA(state.costs);
     destroyCUDA(state.instance_nets);
     destroyCUDA(state.instance_nets_size);
     destroyCUDA(state.node2inst_map);
