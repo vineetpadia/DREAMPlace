@@ -75,7 +75,6 @@ struct KReorderState {
                                                           ///< most K cells to
                                                           ///< be solved.
   T* costs;              ///< maximum reorder_instances.size2 * num_permutations
-  int* best_permute_id;  ///< maximum reorder_instances.size2
   InstanceNet<T>*
       instance_nets;  ///< reorder_instances.size2 * MAX_NUM_NETS_PER_INSTANCE
   int* instance_nets_size;      ///< reorder_instances.size2, number of nets for
@@ -510,7 +509,6 @@ __global__ void reduce_min_and_apply_reorder(
           thread_data, ReduceMinOP<T>(), state.num_permutations);
 
   if (threadIdx.x == 0) {
-    state.best_permute_id[inst_id] = aggregate.index;
     apply_reorder_instance(
         db, state, group_id, inst_id, aggregate.index, offset);
   }
@@ -817,17 +815,6 @@ __global__ void print_costs(StateType state, int group_id, int offset) {
         printf("%g ", state.costs[i * state.num_permutations + j]);
       }
       printf("\n");
-    }
-  }
-}
-
-template <typename StateType>
-__global__ void print_best_permute_id(StateType state, int group_id,
-                                      int offset) {
-  if (blockIdx.x == 0 && threadIdx.x == 0) {
-    printf("group_id %d, offset %d, %s\n", group_id, offset, __func__);
-    for (int i = 0; i < state.reorder_instances.size(group_id); ++i) {
-      printf("[%d] = %d\n", i, state.best_permute_id[i]);
     }
   }
 }
@@ -1200,7 +1187,6 @@ int kreorderCUDALauncher(DetailedPlaceDB<T> db, int K, int max_iters,
 
     allocateCUDA(state.costs,
                  state.reorder_instances.size2 * state.num_permutations, T);
-    allocateCUDA(state.best_permute_id, state.reorder_instances.size2, int);
     allocateCUDA(state.instance_nets,
                  state.reorder_instances.size2 * MAX_NUM_NETS_PER_INSTANCE,
                  InstanceNet<T>);
@@ -1261,7 +1247,6 @@ int kreorderCUDALauncher(DetailedPlaceDB<T> db, int K, int max_iters,
     state.row2node_map.destroy();
     state.reorder_instances.destroy();
     destroyCUDA(state.costs);
-    destroyCUDA(state.best_permute_id);
     destroyCUDA(state.instance_nets);
     destroyCUDA(state.instance_nets_size);
     destroyCUDA(state.node2inst_map);
