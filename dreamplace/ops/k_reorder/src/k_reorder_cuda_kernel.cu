@@ -622,7 +622,7 @@ __global__ void compute_instance_nets(DetailedPlaceDB<T> db,
         if (candidate_id < node2pin_id_end) {
           node_pin_id = db.flat_node2pin_map[candidate_id];
           net_id = db.pin2net_map[node_pin_id];
-          selected = state.net_markers[net_id];
+          selected = db.net_mask[net_id];
         }
         unsigned selected_mask =
             __ballot_sync(kFullWarpMask, selected);
@@ -886,10 +886,12 @@ __global__ void reset_state(DetailedPlaceDBType db, StateType state) {
        i += blockDim.x * gridDim.x) {
     state.node2inst_map[i] = DREAMPLACE_CUDA_NAMESPACE::numeric_limits<int>::max();
   }
+#ifndef DETERMINISTIC
   for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < db.num_nets;
        i += blockDim.x * gridDim.x) {
     state.net_markers[i] = 0;
   }
+#endif
 }
 
 #ifdef K_REORDER_PROFILE
@@ -930,8 +932,10 @@ void k_reorder(
         reset_state<<<64, 512>>>(db, state);
         compute_node2inst_map<<<ceilDiv(group_size, 256), 256>>>(
             db, state, group_id, offset);
+#ifndef DETERMINISTIC
         compute_net_markers<<<ceilDiv(db.num_movable_nodes, 256), 256>>>(db,
                                                                          state);
+#endif
         // print_net_markers<<<1, 1>>>(db, state);
 #ifdef DETERMINISTIC
         compute_instance_nets<<<ceilDiv(group_size * 32, 256), 256>>>(
