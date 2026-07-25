@@ -33,7 +33,16 @@ void dct2_fft2_forward(at::Tensor x, at::Tensor expkM, at::Tensor expkN,
         DREAMPLACE_TENSOR_DATA_PTR(x, scalar_t),
         DREAMPLACE_TENSOR_DATA_PTR(out, scalar_t), M, N);
 
+#if TORCH_VERSION_MAJOR > 1 || \
+    (TORCH_VERSION_MAJOR == 1 && TORCH_VERSION_MINOR >= 8)
+    // The compatibility rfft wrapper materializes a real view of the complex
+    // result with contiguous(), even though the caller already owns a buffer
+    // with the required layout.  Write the FFT directly into that buffer.
+    auto complex_buf = at::view_as_complex(buf);
+    at::fft_rfft2_out(complex_buf, out, c10::nullopt, {-2, -1}, "backward");
+#else
     buf = at::rfft(out, 2, false, true);
+#endif
 
     dct2dPostprocessCudaLauncher<scalar_t>(
         DREAMPLACE_TENSOR_DATA_PTR(buf, scalar_t),
