@@ -290,13 +290,14 @@ __global__ void maximal_independent_set_dynamic(DetailedPlaceDBType db, Independ
 {
     // if dependent_markers is 1, it means "cannot be selected"
     // if selected_markers is 1, it means "already selected"
-    init_markers_kernel<<<ceilDiv(db.num_nodes, 256), 256>>>(db, state);
+    constexpr int threads = 128;
+    init_markers_kernel<<<ceilDiv(db.num_nodes, threads), threads>>>(db, state);
 
     int iteration = 0; 
     do {
         *state.independent_set_empty_flag = true; 
-        maximal_independent_set_kernel<<<ceilDiv(db.num_movable_nodes, 256), 256>>>(db, state, state.independent_set_empty_flag);
-        mark_dependent_nodes_kernel<<<ceilDiv(db.num_movable_nodes, 256), 256>>>(db, state);
+        maximal_independent_set_kernel<<<ceilDiv(db.num_movable_nodes, threads), threads>>>(db, state, state.independent_set_empty_flag);
+        mark_dependent_nodes_kernel<<<ceilDiv(db.num_movable_nodes, threads), threads>>>(db, state);
         ++iteration; 
     } while (!*state.independent_set_empty_flag && iteration < 10); 
     //marker_sum<<<1, 1>>>(state.selected_markers, db.num_movable_nodes);
@@ -310,7 +311,8 @@ void maximal_independent_set(DetailedPlaceDBType const& db, IndependentSetMatchi
 {
     // if dependent_markers is 1, it means "cannot be selected"
     // if selected_markers is 1, it means "already selected"
-    init_markers_kernel<<<ceilDiv(db.num_nodes, 256), 256>>>(db, state);
+    constexpr int threads = 128;
+    init_markers_kernel<<<ceilDiv(db.num_nodes, threads), threads>>>(db, state);
 
     int host_empty; 
 
@@ -318,8 +320,8 @@ void maximal_independent_set(DetailedPlaceDBType const& db, IndependentSetMatchi
     do {
         host_empty = true; 
         checkCUDA(cudaMemcpy(state.independent_set_empty_flag, &host_empty, sizeof(int), cudaMemcpyHostToDevice));
-        maximal_independent_set_kernel<<<ceilDiv(db.num_movable_nodes, 256), 256>>>(db, state, state.independent_set_empty_flag);
-        mark_dependent_nodes_kernel<<<ceilDiv(db.num_movable_nodes, 256), 256>>>(db, state);
+        maximal_independent_set_kernel<<<ceilDiv(db.num_movable_nodes, threads), threads>>>(db, state, state.independent_set_empty_flag);
+        mark_dependent_nodes_kernel<<<ceilDiv(db.num_movable_nodes, threads), threads>>>(db, state);
         checkCUDA(cudaMemcpy(&host_empty, state.independent_set_empty_flag, sizeof(int), cudaMemcpyDeviceToHost));
         ++iteration; 
     } while (!host_empty && iteration < 10); 
