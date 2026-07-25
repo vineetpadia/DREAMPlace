@@ -42,12 +42,38 @@ __device__ __forceinline__ double rounded_add(double lhs, double rhs) {
   return __dadd_rn(lhs, rhs);
 }
 
+template <typename T>
+__device__ __forceinline__ T rounded_div(T lhs, T rhs);
+
+template <>
+__device__ __forceinline__ float rounded_div(float lhs, float rhs) {
+  return __fdiv_rn(lhs, rhs);
+}
+
+template <>
+__device__ __forceinline__ double rounded_div(double lhs, double rhs) {
+  return __ddiv_rn(lhs, rhs);
+}
+
+template <typename T>
+__device__ __forceinline__ T rounded_sqrt(T value);
+
+template <>
+__device__ __forceinline__ float rounded_sqrt(float value) {
+  return __fsqrt_rn(value);
+}
+
+template <>
+__device__ __forceinline__ double rounded_sqrt(double value) {
+  return __dsqrt_rn(value);
+}
+
 template <typename T, bool ApplyBoundary, bool WriteDeltaSquared>
 __global__ void nesterovUpdateKernel(
     const T* __restrict__ v_k,
     const T* __restrict__ g_k,
     const T* __restrict__ u_k,
-    const T* __restrict__ alpha_k,
+    T alpha_k,
     T coefficient,
     const T* __restrict__ node_size_x,
     const T* __restrict__ node_size_y,
@@ -63,7 +89,7 @@ __global__ void nesterovUpdateKernel(
     int numel) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i < numel) {
-    T next_u = rounded_mul(alpha_k[0], g_k[i]);
+    T next_u = rounded_mul(alpha_k, g_k[i]);
     next_u = rounded_sub(v_k[i], next_u);
     T extrapolation = rounded_sub(next_u, u_k[i]);
     extrapolation = rounded_mul(extrapolation, coefficient);
@@ -105,8 +131,14 @@ __global__ void squaredDifferenceKernel(
 }
 
 template <typename T>
+__global__ void stepLengthKernel(const T* numerator, T* denominator) {
+  denominator[0] =
+      rounded_sqrt(rounded_div(numerator[0], denominator[0]));
+}
+
+template <typename T>
 void nesterovUpdateCudaLauncher(
-    const T* v_k, const T* g_k, const T* u_k, const T* alpha_k,
+    const T* v_k, const T* g_k, const T* u_k, T alpha_k,
     T coefficient, T* u_kp1, T* v_kp1, int numel) {
   constexpr int thread_count = 256;
   nesterovUpdateKernel<T, false, false>
@@ -117,7 +149,7 @@ void nesterovUpdateCudaLauncher(
 
 template <typename T>
 void nesterovUpdateWithBoundaryCudaLauncher(
-    const T* v_k, const T* g_k, const T* u_k, const T* alpha_k,
+    const T* v_k, const T* g_k, const T* u_k, T alpha_k,
     T coefficient, const T* node_size_x, const T* node_size_y, T xl, T yl,
     T xh, T yh, int num_movable_nodes, int num_filler_nodes, T* u_kp1,
     T* v_kp1, T* delta_squared, int numel) {
@@ -138,17 +170,25 @@ void squaredDifferenceCudaLauncher(
           lhs, rhs, output, numel);
 }
 
+template <typename T>
+void stepLengthCudaLauncher(const T* numerator, T* denominator) {
+  stepLengthKernel<T><<<1, 1, 0, DREAMPLACE_STREAM>>>(
+      numerator, denominator);
+}
+
 #define REGISTER_KERNEL_LAUNCHER(T)                                        \
   template void nesterovUpdateCudaLauncher<T>(                             \
-      const T* v_k, const T* g_k, const T* u_k, const T* alpha_k,           \
+      const T* v_k, const T* g_k, const T* u_k, T alpha_k,                  \
       T coefficient, T* u_kp1, T* v_kp1, int numel);                       \
   template void nesterovUpdateWithBoundaryCudaLauncher<T>(                 \
-      const T* v_k, const T* g_k, const T* u_k, const T* alpha_k,           \
+      const T* v_k, const T* g_k, const T* u_k, T alpha_k,                  \
       T coefficient, const T* node_size_x, const T* node_size_y, T xl,      \
       T yl, T xh, T yh, int num_movable_nodes, int num_filler_nodes,        \
       T* u_kp1, T* v_kp1, T* delta_squared, int numel);                     \
   template void squaredDifferenceCudaLauncher<T>(                           \
-      const T* lhs, const T* rhs, T* output, int numel);
+      const T* lhs, const T* rhs, T* output, int numel);                    \
+  template void stepLengthCudaLauncher<T>(                                  \
+      const T* numerator, T* denominator);
 
 REGISTER_KERNEL_LAUNCHER(float);
 REGISTER_KERNEL_LAUNCHER(double);

@@ -44,7 +44,7 @@ class NesterovUpdateTest(unittest.TestCase):
                 v_k,
                 g_k,
                 u_k,
-                alpha_k,
+                alpha_k.item(),
                 coefficient,
                 actual_u,
                 actual_v,
@@ -74,7 +74,7 @@ class NesterovUpdateTest(unittest.TestCase):
             v_k,
             g_k,
             u_k,
-            alpha_k,
+            alpha_k.item(),
             coefficient,
             expected_u,
             expected_v,
@@ -95,7 +95,7 @@ class NesterovUpdateTest(unittest.TestCase):
             v_k,
             g_k,
             u_k,
-            alpha_k,
+            alpha_k.item(),
             coefficient,
             node_size_x,
             node_size_y,
@@ -122,6 +122,19 @@ class NesterovUpdateTest(unittest.TestCase):
             expected = (lhs - rhs) ** 2
             actual = torch.empty_like(lhs)
             nesterov_update_cuda.squared_difference(lhs, rhs, actual)
+            self.assertTrue(torch.equal(expected, actual))
+
+    def test_step_length_matches_pytorch_bitwise(self):
+        for dtype in (torch.float32, torch.float64):
+            numerator = torch.tensor(
+                12345.6789, dtype=dtype, device="cuda"
+            )
+            denominator = torch.tensor(
+                0.0314159, dtype=dtype, device="cuda"
+            )
+            expected = torch.sqrt(numerator / denominator)
+            actual = denominator.clone()
+            nesterov_update_cuda.step_length(numerator, actual)
             self.assertTrue(torch.equal(expected, actual))
 
 

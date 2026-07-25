@@ -149,8 +149,24 @@ class NesterovAcceleratedGradientOptimizer(Optimizer):
                 g_k_1 = group['g_k_1'][i]
                 obj_k_1 = group['obj_k_1'][i]
                 if not group['alpha_k']:
-                    group['alpha_k'].append((v_k.data-v_k_1.data).norm(p=2) / (g_k-g_k_1).norm(p=2))
+                    initial_alpha = (
+                        (v_k.data-v_k_1.data).norm(p=2)
+                        / (g_k-g_k_1).norm(p=2)
+                    )
+                    if g_k.is_cuda and g_k.dtype == torch.float32:
+                        initial_alpha = np.float32(initial_alpha.item())
+                    group['alpha_k'].append(initial_alpha)
                 alpha_k = group['alpha_k'][i]
+                # Older checkpoints store alpha_k as a CUDA scalar tensor.
+                # Normalize it once so the steady-state update and acceptance
+                # test do not need scalar GPU kernels or D2D copies.
+                if (
+                    g_k.is_cuda
+                    and g_k.dtype == torch.float32
+                    and torch.is_tensor(alpha_k)
+                ):
+                    alpha_k = np.float32(alpha_k.item())
+                    group['alpha_k'][i] = alpha_k
 
                 if group['v_kp1'][i] is None:
                     group['v_kp1'][i] = torch.autograd.Variable(torch.zeros_like(v_k), requires_grad=True)
@@ -225,9 +241,10 @@ class NesterovAcceleratedGradientOptimizer(Optimizer):
                         nesterov_update_cuda.squared_difference(
                             g_kp1.data, g_k.data, delta_squared)
                         gradient_delta_norm_squared = torch.sum(delta_squared)
-                        alpha_kp1 = torch.sqrt(
-                            position_delta_norm_squared
-                            / gradient_delta_norm_squared)
+                        nesterov_update_cuda.step_length(
+                            position_delta_norm_squared,
+                            gradient_delta_norm_squared)
+                        alpha_kp1 = gradient_delta_norm_squared
                     else:
                         alpha_kp1 = torch.sqrt(torch.sum((v_kp1.data-v_k.data)**2) / torch.sum((g_kp1.data-g_k.data)**2))
                     # alpha_kp1 = torch.dist(v_kp1.data, v_k.data, p=2) / torch.dist(g_kp1.data, g_k.data, p=2)
@@ -239,11 +256,23 @@ class NesterovAcceleratedGradientOptimizer(Optimizer):
 
                     #logging.debug("alpha_kp1 = %g, line_search_count = %d, obj_eval_count = %d" % (alpha_kp1, backtrack_cnt, group['obj_eval_count']))
                     #logging.debug("|g_k| = %.6E, |g_kp1| = %.6E" % (g_k.norm(p=2), g_kp1.norm(p=2)))
-                    if alpha_kp1 > 0.95*alpha_k or backtrack_cnt >= max_backtrack_cnt:
-                        alpha_k.data.copy_(alpha_kp1.data)
-                        break
+                    if isinstance(alpha_k, np.float32):
+                        alpha_kp1_value = np.float32(alpha_kp1.item())
+                        accept_step = (
+                            alpha_kp1_value
+                            > np.float32(np.float32(0.95) * alpha_k)
+                            or backtrack_cnt >= max_backtrack_cnt
+                        )
+                        alpha_k = alpha_kp1_value
+                        group['alpha_k'][i] = alpha_k
                     else:
+                        accept_step = (
+                            alpha_kp1 > 0.95*alpha_k
+                            or backtrack_cnt >= max_backtrack_cnt
+                        )
                         alpha_k.data.copy_(alpha_kp1.data)
+                    if accept_step:
+                        break
                 #if v_k.is_cuda:
                 #    torch.cuda.synchronize()
                 #logging.debug("\tline search %.3f ms" % ((time.time()-ttt)*1000))
