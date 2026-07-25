@@ -36,6 +36,19 @@ class EvalMetrics (object):
         self.tns = None
         self.wns = None
         self.eval_time = None
+        self._scalar_cache = {}
+
+    def get_scalar(self, name, index=None):
+        """Return and cache a scalar view of an immutable metric field."""
+        key = (name, index)
+        if key not in self._scalar_cache:
+            value = getattr(self, name)
+            if index is not None:
+                value = value[index]
+            self._scalar_cache[key] = (
+                value.item() if torch.is_tensor(value) else value
+            )
+        return self._scalar_cache[key]
 
     def __str__(self):
         """
@@ -61,12 +74,14 @@ class EvalMetrics (object):
             else:
                 content += ", DensityWeight [%s]" % ", ".join(["%.3E" % i for i in self.density_weight])
         if self.hpwl is not None:
-            content += ", wHPWL %.6E" % (self.hpwl)
+            content += ", wHPWL %.6E" % self.get_scalar("hpwl")
         if self.rmst_wl is not None:
             content += ", RMSTWL %.3E" % (self.rmst_wl)
         if self.overflow is not None:
             if self.overflow.numel() == 1:
-                content += ", Overflow %.6E" % (self.overflow)
+                content += ", Overflow %.6E" % self.get_scalar(
+                    "overflow", -1
+                )
             else:
                 content += ", Overflow [%s]" % ", ".join(["%.3E" % i for i in self.overflow])
         if self.goverflow is not None:

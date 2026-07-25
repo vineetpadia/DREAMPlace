@@ -543,14 +543,14 @@ class NonLinearPlace(BasicPlace.BasicPlace):
                     if optimizer_name.lower() == "nesterov":
                         cur_metric.objective = optimizer.param_groups[0]["obj_k_1"][0].data.clone()
 
-                    # actually reports the metric before step
-                    logging.info(cur_metric)
-                    cur_overflow = cur_metric.overflow[-1].item()
+                    cur_overflow = cur_metric.get_scalar("overflow", -1)
                     cur_hpwl = (
-                        cur_metric.hpwl.item()
+                        cur_metric.get_scalar("hpwl")
                         if len(placedb.regions) == 0
                         else None
                     )
+                    # actually reports the metric before step
+                    logging.info(cur_metric)
                     # record the best outer cell overflow
                     if best_metric[0] is None or best_overflow[0] > cur_overflow:
                         best_metric[0] = cur_metric
