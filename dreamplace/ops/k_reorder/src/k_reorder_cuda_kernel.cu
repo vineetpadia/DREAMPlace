@@ -572,15 +572,19 @@ template <typename T>
 __global__ void compute_instance_nets(DetailedPlaceDB<T> db,
                                       KReorderState<T> state, int group_id,
                                       int offset) {
+  constexpr int kWarpSize = 32;
+  constexpr unsigned kFullWarpMask = 0xffffffffU;
   __shared__ int group_size;
   if (threadIdx.x == 0) {
     group_size = state.reorder_instances.size(group_id);
   }
   __syncthreads();
 
-  for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < group_size;
-       i += blockDim.x * gridDim.x) {
-    int inst_id = i;
+  int lane_id = threadIdx.x & (kWarpSize - 1);
+  int warp_id =
+      (blockIdx.x * blockDim.x + threadIdx.x) / kWarpSize;
+  int num_warps = blockDim.x * gridDim.x / kWarpSize;
+  for (int inst_id = warp_id; inst_id < group_size; inst_id += num_warps) {
     // this is a copy
     auto inst = state.reorder_instances(group_id, inst_id);
     inst.idx_bgn += offset;
@@ -588,10 +592,9 @@ __global__ void compute_instance_nets(DetailedPlaceDB<T> db,
         min(inst.idx_end + offset, state.row2node_map.size(inst.row_id));
     const auto row2nodes = state.row2node_map(inst.row_id) + inst.idx_bgn;
     int K = inst.idx_end - inst.idx_bgn;
-    auto& instance_nets_size = state.instance_nets_size[inst_id];
+    int instance_nets_size = 0;
     auto instance_nets =
         state.instance_nets + inst_id * MAX_NUM_NETS_PER_INSTANCE;
-    instance_nets_size = 0;
 
     // after adding offset
     for (int idx = 0; idx < K; ++idx) {
@@ -606,23 +609,47 @@ __global__ void compute_instance_nets(DetailedPlaceDB<T> db,
 
     for (int j = 0; j < K; ++j) {
       int node_id = row2nodes[j];
-      int node2pin_id = db.flat_node2pin_start_map[node_id];
+      int node_marker = state.node_markers[node_id];
+      int node2pin_id_bgn = db.flat_node2pin_start_map[node_id];
       int node2pin_id_end = db.flat_node2pin_start_map[node_id + 1];
-      for (; node2pin_id < node2pin_id_end; ++node2pin_id) {
-        int node_pin_id = db.flat_node2pin_map[node2pin_id];
-        int net_id = db.pin2net_map[node_pin_id];
-        if (state.net_markers[net_id]) {
-          if (instance_nets_size < MAX_NUM_NETS_PER_INSTANCE) {
-            auto& instance_net = instance_nets[instance_nets_size];
-
+      for (int node2pin_id = node2pin_id_bgn;
+           node2pin_id < node2pin_id_end; node2pin_id += kWarpSize) {
+        int candidate_id = node2pin_id + lane_id;
+        int node_pin_id = 0;
+        int net_id = 0;
+        bool selected = false;
+        if (candidate_id < node2pin_id_end) {
+          node_pin_id = db.flat_node2pin_map[candidate_id];
+          net_id = db.pin2net_map[node_pin_id];
+          selected = state.net_markers[net_id];
+        }
+        unsigned selected_mask =
+            __ballot_sync(kFullWarpMask, selected);
+        if (selected) {
+          unsigned lower_lanes = (1U << lane_id) - 1U;
+          int output_id =
+              instance_nets_size + __popc(selected_mask & lower_lanes);
+          if (output_id < MAX_NUM_NETS_PER_INSTANCE) {
+            auto& instance_net = instance_nets[output_id];
             instance_net.net_id = net_id;
-            instance_net.node_marker = (1 << state.node_markers[node_id]);
-            instance_net.pin_offset_x[state.node_markers[node_id]] =
+            instance_net.node_marker = (1 << node_marker);
+            instance_net.pin_offset_x[node_marker] =
                 db.pin_offset_x[node_pin_id];
-            instance_nets_size += 1;
           }
         }
+        instance_nets_size =
+            min(MAX_NUM_NETS_PER_INSTANCE,
+                instance_nets_size + __popc(selected_mask));
+        if (instance_nets_size == MAX_NUM_NETS_PER_INSTANCE) {
+          break;
+        }
       }
+      if (instance_nets_size == MAX_NUM_NETS_PER_INSTANCE) {
+        break;
+      }
+    }
+    if (lane_id == 0) {
+      state.instance_nets_size[inst_id] = instance_nets_size;
     }
   }
 }
@@ -938,7 +965,7 @@ void k_reorder(
                                                                          state);
         // print_net_markers<<<1, 1>>>(db, state);
 #ifdef DETERMINISTIC
-        compute_instance_nets<<<ceilDiv(group_size, 256), 256>>>(
+        compute_instance_nets<<<ceilDiv(group_size * 32, 256), 256>>>(
             db, state, group_id, offset);
 #else
         compute_instance_nets<<<ceilDiv(db.num_nets, 256), 256>>>(db, state);
