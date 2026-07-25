@@ -19,7 +19,7 @@ int computeElectricForceCudaLauncher(
     const T* bin_center_x_tensor, const T* bin_center_y_tensor, T xl, T yl,
     T xh, T yh, T bin_size_x, T bin_size_y, int num_nodes,
     int num_movable_nodes, int num_filler_nodes, bool deterministic_flag,
-    const T* grad_pos, T* grad_x_tensor, T* grad_y_tensor,
+    const T* grad_pos, bool negate, T* grad_x_tensor, T* grad_y_tensor,
     const int* sorted_node_map);
 
 /// @brief compute electric force for movable and filler cells
@@ -55,7 +55,7 @@ int computeElectricForceCudaLauncher(
 /// @param num_movable_nodes number of movable cells
 /// @param num_filler_nodes number of filler cells
 /// @param sorted_node_map the indices of the movable node map
-at::Tensor electric_force(
+at::Tensor electric_force_impl(
     at::Tensor grad_pos, int num_bins_x, int num_bins_y,
     int num_movable_impacted_bins_x, int num_movable_impacted_bins_y,
     int num_filler_impacted_bins_x, int num_filler_impacted_bins_y,
@@ -64,7 +64,8 @@ at::Tensor electric_force(
     at::Tensor offset_x, at::Tensor offset_y, at::Tensor ratio,
     at::Tensor bin_center_x, at::Tensor bin_center_y, double xl, double yl,
     double xh, double yh, double bin_size_x, double bin_size_y,
-    int num_movable_nodes, int num_filler_nodes, int deterministic_flag, at::Tensor sorted_node_map) {
+    int num_movable_nodes, int num_filler_nodes, int deterministic_flag,
+    at::Tensor sorted_node_map, bool negate) {
   CHECK_FLAT_CUDA(pos);
   CHECK_EVEN(pos);
   CHECK_CONTIGUOUS(pos);
@@ -100,6 +101,7 @@ at::Tensor electric_force(
               yh, bin_size_x, bin_size_y, num_nodes, num_movable_nodes,
               num_filler_nodes, true,
               DREAMPLACE_TENSOR_DATA_PTR(grad_pos, scalar_t),
+              negate,
               DREAMPLACE_TENSOR_DATA_PTR(grad_out, scalar_t),
               DREAMPLACE_TENSOR_DATA_PTR(grad_out, scalar_t) + num_nodes,
               DREAMPLACE_TENSOR_DATA_PTR(sorted_node_map, int));
@@ -125,6 +127,7 @@ at::Tensor electric_force(
             DREAMPLACE_TENSOR_DATA_PTR(bin_center_y, scalar_t), xl, yl, xh, yh,
             bin_size_x, bin_size_y, num_movable_nodes, num_movable_nodes, 0,
             false, DREAMPLACE_TENSOR_DATA_PTR(grad_pos, scalar_t),
+            negate,
             DREAMPLACE_TENSOR_DATA_PTR(grad_out, scalar_t),
             DREAMPLACE_TENSOR_DATA_PTR(grad_out, scalar_t) + num_nodes,
             DREAMPLACE_TENSOR_DATA_PTR(sorted_node_map, int));
@@ -150,6 +153,7 @@ at::Tensor electric_force(
               yh, bin_size_x, bin_size_y, num_filler_nodes,
               num_filler_nodes, 0, false,
               DREAMPLACE_TENSOR_DATA_PTR(grad_pos, scalar_t),
+              negate,
               DREAMPLACE_TENSOR_DATA_PTR(grad_out, scalar_t) + num_physical_nodes,
               DREAMPLACE_TENSOR_DATA_PTR(grad_out, scalar_t) + num_nodes + num_physical_nodes,
               NULL);
@@ -157,6 +161,48 @@ at::Tensor electric_force(
   }
 
   return grad_out;
+}
+
+at::Tensor electric_force(
+    at::Tensor grad_pos, int num_bins_x, int num_bins_y,
+    int num_movable_impacted_bins_x, int num_movable_impacted_bins_y,
+    int num_filler_impacted_bins_x, int num_filler_impacted_bins_y,
+    at::Tensor field_map_x, at::Tensor field_map_y, at::Tensor pos,
+    at::Tensor node_size_x_clamped, at::Tensor node_size_y_clamped,
+    at::Tensor offset_x, at::Tensor offset_y, at::Tensor ratio,
+    at::Tensor bin_center_x, at::Tensor bin_center_y, double xl, double yl,
+    double xh, double yh, double bin_size_x, double bin_size_y,
+    int num_movable_nodes, int num_filler_nodes, int deterministic_flag,
+    at::Tensor sorted_node_map) {
+  return electric_force_impl(
+      grad_pos, num_bins_x, num_bins_y, num_movable_impacted_bins_x,
+      num_movable_impacted_bins_y, num_filler_impacted_bins_x,
+      num_filler_impacted_bins_y, field_map_x, field_map_y, pos,
+      node_size_x_clamped, node_size_y_clamped, offset_x, offset_y, ratio,
+      bin_center_x, bin_center_y, xl, yl, xh, yh, bin_size_x, bin_size_y,
+      num_movable_nodes, num_filler_nodes, deterministic_flag, sorted_node_map,
+      false);
+}
+
+at::Tensor electric_force_negative(
+    at::Tensor grad_pos, int num_bins_x, int num_bins_y,
+    int num_movable_impacted_bins_x, int num_movable_impacted_bins_y,
+    int num_filler_impacted_bins_x, int num_filler_impacted_bins_y,
+    at::Tensor field_map_x, at::Tensor field_map_y, at::Tensor pos,
+    at::Tensor node_size_x_clamped, at::Tensor node_size_y_clamped,
+    at::Tensor offset_x, at::Tensor offset_y, at::Tensor ratio,
+    at::Tensor bin_center_x, at::Tensor bin_center_y, double xl, double yl,
+    double xh, double yh, double bin_size_x, double bin_size_y,
+    int num_movable_nodes, int num_filler_nodes, int deterministic_flag,
+    at::Tensor sorted_node_map) {
+  return electric_force_impl(
+      grad_pos, num_bins_x, num_bins_y, num_movable_impacted_bins_x,
+      num_movable_impacted_bins_y, num_filler_impacted_bins_x,
+      num_filler_impacted_bins_y, field_map_x, field_map_y, pos,
+      node_size_x_clamped, node_size_y_clamped, offset_x, offset_y, ratio,
+      bin_center_x, bin_center_y, xl, yl, xh, yh, bin_size_x, bin_size_y,
+      num_movable_nodes, num_filler_nodes, deterministic_flag, sorted_node_map,
+      true);
 }
 
 DREAMPLACE_END_NAMESPACE

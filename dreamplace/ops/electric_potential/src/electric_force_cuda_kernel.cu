@@ -17,7 +17,7 @@ DREAMPLACE_BEGIN_NAMESPACE
 template <typename T>
 inline __device__ DEFINE_TRIANGLE_DENSITY_FUNCTION(T);
 
-template <typename T>
+template <typename T, bool Negate>
 __global__ void __launch_bounds__(1024, 8) computeElectricForce(
     int num_bins_x, int num_bins_y, const T *field_map_x_tensor,
     const T *field_map_y_tensor, const T *x_tensor, const T *y_tensor,
@@ -92,8 +92,10 @@ __global__ void __launch_bounds__(1024, 8) computeElectricForce(
     __syncthreads();
 
     if (threadIdx.x == 0 && threadIdx.y == 0) {
-      grad_x_tensor[i] = s_x[threadIdx.z] * grad_pos[0];
-      grad_y_tensor[i] = s_y[threadIdx.z] * grad_pos[0];
+      T grad_x = s_x[threadIdx.z] * grad_pos[0];
+      T grad_y = s_y[threadIdx.z] * grad_pos[0];
+      grad_x_tensor[i] = Negate ? -grad_x : grad_x;
+      grad_y_tensor[i] = Negate ? -grad_y : grad_y;
     }
   }
 }
@@ -349,7 +351,7 @@ __global__ void computeElectricForceUnroll(
   }
 }
 
-template <typename T>
+template <typename T, bool Negate>
 __global__ void computeElectricForceSimpleLikeCPU(
     int num_bins_x, int num_bins_y, int num_impacted_bins_x,
     int num_impacted_bins_y, const T *field_map_x_tensor,
@@ -367,8 +369,9 @@ __global__ void computeElectricForceSimpleLikeCPU(
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i < num_nodes) {
     if (i >= num_movable_nodes && i < num_nodes - num_filler_nodes) {
-      grad_x_tensor[i] = 0;
-      grad_y_tensor[i] = 0;
+      T zero = 0;
+      grad_x_tensor[i] = Negate ? -zero : zero;
+      grad_y_tensor[i] = Negate ? -zero : zero;
       return;
     }
 
@@ -414,13 +417,15 @@ __global__ void computeElectricForceSimpleLikeCPU(
         gy += area * field_map_y_tensor[idx];
       }
     }
-    grad_x_tensor[i] = (gx * ratio) * grad_pos[0];
-    grad_y_tensor[i] = (gy * ratio) * grad_pos[0];
+    T grad_x = (gx * ratio) * grad_pos[0];
+    T grad_y = (gy * ratio) * grad_pos[0];
+    grad_x_tensor[i] = Negate ? -grad_x : grad_x;
+    grad_y_tensor[i] = Negate ? -grad_y : grad_y;
   }
 }
 
-template <typename T>
-int computeElectricForceCudaLauncher(
+template <typename T, bool Negate>
+int computeElectricForceCudaLauncherImpl(
     int num_bins_x, int num_bins_y, int num_impacted_bins_x,
     int num_impacted_bins_y, const T *field_map_x_tensor,
     const T *field_map_y_tensor, const T *x_tensor, const T *y_tensor,
@@ -435,7 +440,8 @@ int computeElectricForceCudaLauncher(
   int block_count_nodes = ceilDiv(num_nodes, thread_count);
 
   if (deterministic_flag) {
-    computeElectricForceSimpleLikeCPU<<<block_count_nodes, thread_count, 0, DREAMPLACE_STREAM>>>(
+    computeElectricForceSimpleLikeCPU<T, Negate>
+        <<<block_count_nodes, thread_count, 0, DREAMPLACE_STREAM>>>(
         num_bins_x, num_bins_y,
         num_impacted_bins_x, num_impacted_bins_y,
         field_map_x_tensor, field_map_y_tensor,
@@ -452,7 +458,8 @@ int computeElectricForceCudaLauncher(
   } else {
     dim3 blockSize(2, 2, thread_count);
     size_t shared_mem_size = sizeof(T) * thread_count * 2;
-    computeElectricForce<<<block_count_nodes, blockSize, shared_mem_size, DREAMPLACE_STREAM>>>(
+    computeElectricForce<T, Negate>
+        <<<block_count_nodes, blockSize, shared_mem_size, DREAMPLACE_STREAM>>>(
         num_bins_x, num_bins_y, field_map_x_tensor, field_map_y_tensor, x_tensor,
         y_tensor, node_size_x_clamped_tensor, node_size_y_clamped_tensor,
         offset_x_tensor, offset_y_tensor, ratio_tensor, bin_center_x_tensor,
@@ -462,6 +469,38 @@ int computeElectricForceCudaLauncher(
   }
 
   return 0;
+}
+
+template <typename T>
+int computeElectricForceCudaLauncher(
+    int num_bins_x, int num_bins_y, int num_impacted_bins_x,
+    int num_impacted_bins_y, const T *field_map_x_tensor,
+    const T *field_map_y_tensor, const T *x_tensor, const T *y_tensor,
+    const T *node_size_x_clamped_tensor, const T *node_size_y_clamped_tensor,
+    const T *offset_x_tensor, const T *offset_y_tensor, const T *ratio_tensor,
+    const T *bin_center_x_tensor, const T *bin_center_y_tensor, T xl, T yl,
+    T xh, T yh, T bin_size_x, T bin_size_y, int num_nodes,
+    int num_movable_nodes, int num_filler_nodes, bool deterministic_flag,
+    const T *grad_pos, bool negate, T *grad_x_tensor, T *grad_y_tensor,
+    const int *sorted_node_map) {
+  if (negate) {
+    return computeElectricForceCudaLauncherImpl<T, true>(
+        num_bins_x, num_bins_y, num_impacted_bins_x, num_impacted_bins_y,
+        field_map_x_tensor, field_map_y_tensor, x_tensor, y_tensor,
+        node_size_x_clamped_tensor, node_size_y_clamped_tensor,
+        offset_x_tensor, offset_y_tensor, ratio_tensor, bin_center_x_tensor,
+        bin_center_y_tensor, xl, yl, xh, yh, bin_size_x, bin_size_y, num_nodes,
+        num_movable_nodes, num_filler_nodes, deterministic_flag, grad_pos,
+        grad_x_tensor, grad_y_tensor, sorted_node_map);
+  }
+  return computeElectricForceCudaLauncherImpl<T, false>(
+      num_bins_x, num_bins_y, num_impacted_bins_x, num_impacted_bins_y,
+      field_map_x_tensor, field_map_y_tensor, x_tensor, y_tensor,
+      node_size_x_clamped_tensor, node_size_y_clamped_tensor, offset_x_tensor,
+      offset_y_tensor, ratio_tensor, bin_center_x_tensor, bin_center_y_tensor,
+      xl, yl, xh, yh, bin_size_x, bin_size_y, num_nodes, num_movable_nodes,
+      num_filler_nodes, deterministic_flag, grad_pos, grad_x_tensor,
+      grad_y_tensor, sorted_node_map);
 }
 
 #define REGISTER_KERNEL_LAUNCHER(T)                                            \
@@ -475,7 +514,7 @@ int computeElectricForceCudaLauncher(
       const T *bin_center_x_tensor, const T *bin_center_y_tensor, T xl, T yl,  \
       T xh, T yh, T bin_size_x, T bin_size_y, int num_nodes,                   \
       int num_movable_nodes, int num_filler_nodes, bool deterministic_flag,    \
-      const T *grad_pos, T *grad_x_tensor, T *grad_y_tensor,                   \
+      const T *grad_pos, bool negate, T *grad_x_tensor, T *grad_y_tensor,      \
       const int *sorted_node_map);
 
 REGISTER_KERNEL_LAUNCHER(float);

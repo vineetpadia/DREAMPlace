@@ -221,7 +221,7 @@ class ElectricPotentialFunction(Function):
     def backward(ctx, grad_pos):
         tt = time.time()
         if grad_pos.is_cuda:
-            output = -electric_potential_cuda.electric_force(
+            output = electric_potential_cuda.electric_force_negative(
                 grad_pos, ctx.num_bins_x, ctx.num_bins_y,
                 ctx.num_movable_impacted_bins_x,
                 ctx.num_movable_impacted_bins_y,
@@ -231,7 +231,8 @@ class ElectricPotentialFunction(Function):
                 ctx.node_size_y_clamped, ctx.offset_x, ctx.offset_y, ctx.ratio,
                 ctx.bin_center_x, ctx.bin_center_y, ctx.xl, ctx.yl, ctx.xh,
                 ctx.yh, ctx.bin_size_x, ctx.bin_size_y, ctx.num_movable_nodes,
-                ctx.num_filler_nodes, ctx.deterministic_flag, ctx.sorted_node_map)
+                ctx.num_filler_nodes, ctx.deterministic_flag,
+                ctx.sorted_node_map)
         else:
             output = -electric_potential_cpp.electric_force(
                 grad_pos, ctx.num_bins_x, ctx.num_bins_y,
@@ -553,4 +554,3 @@ class ElectricPotential(ElectricOverflow):
                             self.target_density * bin_area).clamp_(min=0.0).sum()
 
             return density_cost, density_map.max() / bin_area
-

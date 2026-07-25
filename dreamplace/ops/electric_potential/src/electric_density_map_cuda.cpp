@@ -246,7 +246,20 @@ at::Tensor electric_force(
     at::Tensor offset_x, at::Tensor offset_y, at::Tensor ratio,
     at::Tensor bin_center_x, at::Tensor bin_center_y, double xl, double yl,
     double xh, double yh, double bin_size_x, double bin_size_y,
-    int num_movable_nodes, int num_filler_nodes, int deterministic_flag, at::Tensor sorted_node_map);
+    int num_movable_nodes, int num_filler_nodes, int deterministic_flag,
+    at::Tensor sorted_node_map);
+
+at::Tensor electric_force_negative(
+    at::Tensor grad_pos, int num_bins_x, int num_bins_y,
+    int num_movable_impacted_bins_x, int num_movable_impacted_bins_y,
+    int num_filler_impacted_bins_x, int num_filler_impacted_bins_y,
+    at::Tensor field_map_x, at::Tensor field_map_y, at::Tensor pos,
+    at::Tensor node_size_x_clamped, at::Tensor node_size_y_clamped,
+    at::Tensor offset_x, at::Tensor offset_y, at::Tensor ratio,
+    at::Tensor bin_center_x, at::Tensor bin_center_y, double xl, double yl,
+    double xh, double yh, double bin_size_x, double bin_size_y,
+    int num_movable_nodes, int num_filler_nodes, int deterministic_flag,
+    at::Tensor sorted_node_map);
 
 DREAMPLACE_END_NAMESPACE
 
@@ -257,4 +270,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         "ElectricPotential Density Map for Fixed Cells (CUDA)");
   m.def("electric_force", &DREAMPLACE_NAMESPACE::electric_force,
         "ElectricPotential Electric Force (CUDA)");
+  m.def("electric_force_negative",
+        &DREAMPLACE_NAMESPACE::electric_force_negative,
+        "Negative ElectricPotential Electric Force (CUDA)");
 }

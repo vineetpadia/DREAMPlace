@@ -97,8 +97,22 @@ class ElectricForceTest(unittest.TestCase):
             actual = electric_potential_cuda.electric_force(
                 *cuda_common, 1, sorted_node_map
             ).cpu()
+            actual_negative = electric_potential_cuda.electric_force_negative(
+                *cuda_common, 1, sorted_node_map
+            ).cpu()
 
             torch.testing.assert_close(actual, expected)
+            expected_negative = -expected
+            self.assertTrue(
+                torch.equal(
+                    actual_negative.view(
+                        torch.int32 if dtype == torch.float32 else torch.int64
+                    ),
+                    expected_negative.view(
+                        torch.int32 if dtype == torch.float32 else torch.int64
+                    ),
+                )
+            )
             fixed_x = actual[num_movable_nodes:num_physical_nodes]
             fixed_y = actual[
                 num_nodes + num_movable_nodes:
