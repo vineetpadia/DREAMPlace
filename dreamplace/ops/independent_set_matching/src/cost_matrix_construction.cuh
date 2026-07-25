@@ -40,6 +40,9 @@ __global__ void compute_cost_matrix_kernel(DetailedPlaceDBType db, IndependentSe
     const int* __restrict__ independent_set = state.independent_sets + i*state.set_size; 
     auto cost_matrix = state.cost_matrices + i*state.cost_matrix_size + j*state.set_size; 
     __shared__ DreamPlace::Utility::SharedBox<typename DetailedPlaceDBType::type> net_boxes[MAX_NODE_DEGREE]; 
+    __shared__ typename DetailedPlaceDBType::type pin_offset_x[MAX_NODE_DEGREE];
+    __shared__ typename DetailedPlaceDBType::type pin_offset_y[MAX_NODE_DEGREE];
+    __shared__ unsigned char net_enabled[MAX_NODE_DEGREE];
     int node_id = independent_set[j];
     typename DetailedPlaceDBType::type node_width =
         DREAMPLACE_CUDA_NAMESPACE::numeric_limits<
@@ -62,12 +65,19 @@ __global__ void compute_cost_matrix_kernel(DetailedPlaceDBType db, IndependentSe
             int idx = node2pin_id - node2pin_id_bgn;
             int node_pin_id = db.flat_node2pin_map[node2pin_id];
             int net_id = db.pin2net_map[node_pin_id];
+#ifdef DEBUG
+            assert(node_pin_id >= 0 && node_pin_id < db.num_pins);
+            assert(net_id >= 0 && net_id < db.num_nets);
+#endif
+            pin_offset_x[idx] = db.pin_offset_x[node_pin_id];
+            pin_offset_y[idx] = db.pin_offset_y[node_pin_id];
+            net_enabled[idx] = db.net_mask[net_id];
             auto& box = net_boxes[idx];
             box.xl = db.xh;
             box.yl = db.yh;
             box.xh = db.xl;
             box.yh = db.yl;
-            if (db.net_mask[net_id])
+            if (net_enabled[idx])
             {
                 int net2pin_id_bgn = db.flat_net2pin_start_map[net_id];
                 int net2pin_id_end = db.flat_net2pin_start_map[net_id+1];
@@ -122,19 +132,13 @@ __global__ void compute_cost_matrix_kernel(DetailedPlaceDBType db, IndependentSe
 #ifdef DEBUG
                         assert(node2pin_id >= 0 && node2pin_id < db.num_pins);
 #endif
-                        int node_pin_id = db.flat_node2pin_map[node2pin_id];
-#ifdef DEBUG
-                        assert(node_pin_id >= 0 && node_pin_id < db.num_pins);
-#endif
-                        int net_id = db.pin2net_map[node_pin_id];
-#ifdef DEBUG
-                        assert(net_id >= 0 && net_id < db.num_nets);
-#endif
                         auto const& box = net_boxes[idx];
-                        if (db.net_mask[net_id])
+                        if (net_enabled[idx])
                         {
-                            typename DetailedPlaceDBType::type xxl = target_x+db.pin_offset_x[node_pin_id];
-                            typename DetailedPlaceDBType::type yyl = target_y+db.pin_offset_y[node_pin_id];
+                            typename DetailedPlaceDBType::type xxl =
+                                target_x + pin_offset_x[idx];
+                            typename DetailedPlaceDBType::type yyl =
+                                target_y + pin_offset_y[idx];
                             typename DetailedPlaceDBType::type bxl = min(box.xl, xxl);
                             typename DetailedPlaceDBType::type bxh = max(box.xh, xxl);
                             typename DetailedPlaceDBType::type byl = min(box.yl, yyl);
