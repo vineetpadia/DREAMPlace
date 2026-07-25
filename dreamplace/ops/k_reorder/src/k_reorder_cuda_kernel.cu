@@ -941,8 +941,10 @@ void k_reorder(
             db, state, group_id, group_size);
         // print_instance_nets<<<1, 1>>>(state, group_id, offset);
         // check_instance_nets<<<1, 1>>>(db, state, group_id);
+        constexpr int net_box_threads = 64;
         compute_instance_net_boxes<<<
-            ceilDiv(group_size * MAX_NUM_NETS_PER_INSTANCE, 256), 256>>>(
+            ceilDiv(group_size * MAX_NUM_NETS_PER_INSTANCE, net_box_threads),
+            net_box_threads>>>(
             db, state, group_id, group_size, offset, instance_token_bgn);
         // print_instance_net_bboxes<<<1, 1>>>(state, group_id, offset);
         compute_reorder_hpwl<<<
