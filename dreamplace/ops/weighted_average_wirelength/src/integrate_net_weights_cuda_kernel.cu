@@ -63,19 +63,19 @@ __global__ void scaleIntegrateNetWeightsAndMask(
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < num_pins)
     {
-        T grad_x = grad_x_tensor[i] * grad_pos[0];
-        T grad_y = grad_y_tensor[i] * grad_pos[0];
         int net_id = pin2net_map[i];
-        if (has_net_weights && net_id >= 0 && net_mask[net_id])
+        T grad_x = 0;
+        T grad_y = 0;
+        if (!pin_mask[i] && net_id >= 0 && net_mask[net_id])
         {
-            T weight = net_weights[net_id];
-            grad_x *= weight;
-            grad_y *= weight;
-        }
-        if (pin_mask[i])
-        {
-            grad_x = 0;
-            grad_y = 0;
+            grad_x = grad_x_tensor[i] * grad_pos[0];
+            grad_y = grad_y_tensor[i] * grad_pos[0];
+            if (has_net_weights)
+            {
+                T weight = net_weights[net_id];
+                grad_x *= weight;
+                grad_y *= weight;
+            }
         }
         grad_x_tensor[i] = grad_x;
         grad_y_tensor[i] = grad_y;

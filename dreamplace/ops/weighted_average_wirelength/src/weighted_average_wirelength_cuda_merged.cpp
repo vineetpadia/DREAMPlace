@@ -83,8 +83,7 @@ std::vector<at::Tensor> weighted_average_wirelength_forward(
 
   // x, y interleave
   at::Tensor partial_wl = at::empty({num_nets, 2}, pos.options());
-  // timed with grad_in yet
-  at::Tensor grad_intermediate = at::zeros_like(pos);
+  at::Tensor grad_intermediate = at::empty_like(pos);
 
   DREAMPLACE_DISPATCH_FLOATING_TYPES(
       pos, "computeWeightedAverageWirelengthCudaMergedLauncher", [&] {
