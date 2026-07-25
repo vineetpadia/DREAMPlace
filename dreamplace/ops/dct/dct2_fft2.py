@@ -103,7 +103,7 @@ class IDCT_IDXST(nn.Module):
         self.out = None
         self.buf = None
 
-    def forward(self, x):
+    def forward(self, x, weight=None):
         M = x.size(-2)
         N = x.size(-1)
         if self.expkM is None or self.expkM.size(-2) != M or self.expkM.dtype != x.dtype:
@@ -113,6 +113,13 @@ class IDCT_IDXST(nn.Module):
         if self.out is None:
             self.out = torch.empty(M, N, dtype=x.dtype, device=x.device)
             self.buf = torch.empty(M, N // 2 + 1, 2, dtype=x.dtype, device=x.device)
+
+        if weight is not None:
+            if x.is_cuda:
+                dct2_fft2_cuda.idct_idxst_weighted(
+                    x, weight, self.expkM, self.expkN, self.out, self.buf)
+                return self.out
+            x = x.mul(weight)
 
         return IDCT_IDXSTFunction.apply(x, self.expkM, self.expkN, self.out, self.buf)
 
@@ -136,7 +143,7 @@ class IDXST_IDCT(nn.Module):
         self.out = None
         self.buf = None
 
-    def forward(self, x):
+    def forward(self, x, weight=None):
         M = x.size(-2)
         N = x.size(-1)
         if self.expkM is None or self.expkM.size(-2) != M or self.expkM.dtype != x.dtype:
@@ -146,5 +153,12 @@ class IDXST_IDCT(nn.Module):
         if self.out is None:
             self.out = torch.empty(M, N, dtype=x.dtype, device=x.device)
             self.buf = torch.empty(M, N // 2 + 1, 2, dtype=x.dtype, device=x.device)
+
+        if weight is not None:
+            if x.is_cuda:
+                dct2_fft2_cuda.idxst_idct_weighted(
+                    x, weight, self.expkM, self.expkN, self.out, self.buf)
+                return self.out
+            x = x.mul(weight)
 
         return IDXST_IDCTFunction.apply(x, self.expkM, self.expkN, self.out, self.buf)

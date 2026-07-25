@@ -43,11 +43,14 @@ void idct2_fft2PostprocessCudaLauncher(const T *x, T *y, const int M,
 // idct_idxst
 void idct_idxst_forward(at::Tensor x, at::Tensor expkM, at::Tensor expkN,
                         at::Tensor out, at::Tensor buf);
+void idct_idxst_weighted_forward(at::Tensor x, at::Tensor weight,
+                                 at::Tensor expkM, at::Tensor expkN,
+                                 at::Tensor out, at::Tensor buf);
 
 template <typename T>
-void idct_idxstPreprocessCudaLauncher(const T *x, T *y, const int M,
-                                      const int N, const T *__restrict__ expkM,
-                                      const T *__restrict__ expkN);
+void idct_idxstPreprocessCudaLauncher(
+    const T *x, const T *weight, T *y, const int M, const int N,
+    const T *__restrict__ expkM, const T *__restrict__ expkN);
 
 template <typename T>
 void idct_idxstPostprocessCudaLauncher(const T *x, T *y, const int M,
@@ -56,11 +59,14 @@ void idct_idxstPostprocessCudaLauncher(const T *x, T *y, const int M,
 // idxst_idct
 void idxst_idct_forward(at::Tensor x, at::Tensor expkM, at::Tensor expkN,
                         at::Tensor out, at::Tensor buf);
+void idxst_idct_weighted_forward(at::Tensor x, at::Tensor weight,
+                                 at::Tensor expkM, at::Tensor expkN,
+                                 at::Tensor out, at::Tensor buf);
 
 template <typename T>
-void idxst_idctPreprocessCudaLauncher(const T *x, T *y, const int M,
-                                      const int N, const T *__restrict__ expkM,
-                                      const T *__restrict__ expkN);
+void idxst_idctPreprocessCudaLauncher(
+    const T *x, const T *weight, T *y, const int M, const int N,
+    const T *__restrict__ expkM, const T *__restrict__ expkN);
 
 template <typename T>
 void idxst_idctPostprocessCudaLauncher(const T *x, T *y, const int M,

@@ -163,13 +163,14 @@ class ElectricPotentialFunction(Function):
         auv = dct2.forward(density_map)
 
         # compute field xi
-        auv_by_wu2_plus_wv2_wu = auv.mul(wu_by_wu2_plus_wv2_half)
-        auv_by_wu2_plus_wv2_wv = auv.mul(wv_by_wu2_plus_wv2_half)
-
+        # Apply each spectral weight while preprocessing its inverse transform
+        # instead of materializing two full weighted maps.
         #ctx.field_map_x = discrete_spectral_transform.idsct2(auv_by_wu2_plus_wv2_wu, exact_expkM, exact_expkN).contiguous()
-        ctx.field_map_x = idxst_idct.forward(auv_by_wu2_plus_wv2_wu)
+        ctx.field_map_x = idxst_idct.forward(
+            auv, wu_by_wu2_plus_wv2_half)
         #ctx.field_map_y = discrete_spectral_transform.idcst2(auv_by_wu2_plus_wv2_wv, exact_expkM, exact_expkN).contiguous()
-        ctx.field_map_y = idct_idxst.forward(auv_by_wu2_plus_wv2_wv)
+        ctx.field_map_y = idct_idxst.forward(
+            auv, wv_by_wu2_plus_wv2_half)
 
         # energy = \sum q*phi
         # it takes around 80% of the computation time

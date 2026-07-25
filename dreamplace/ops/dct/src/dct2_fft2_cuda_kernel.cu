@@ -308,6 +308,24 @@ void idct2_fft2PostprocessCudaLauncher(const T *x, T *y, const int M, const int 
     idct2_fft2Postprocess<T><<<gridSize, blockSize>>>(x, y, M, N, N / 2, M * N);
 }
 
+__device__ __forceinline__ float dctMultiplyRound(float lhs, float rhs)
+{
+    return __fmul_rn(lhs, rhs);
+}
+
+__device__ __forceinline__ double dctMultiplyRound(double lhs, double rhs)
+{
+    return __dmul_rn(lhs, rhs);
+}
+
+template <typename T>
+__device__ __forceinline__ T loadWeightedInput(
+    const T *input, const T *weight, const int index)
+{
+    return weight ? dctMultiplyRound(input[index], weight[index])
+                  : input[index];
+}
+
 // idct_idxst
 // Adpated from idct2d_preprocess(). The only change is the reordered input
 // if (wid != 0)
@@ -315,7 +333,7 @@ void idct2_fft2PostprocessCudaLauncher(const T *x, T *y, const int M, const int 
 // else
 //     new_input[hid][0] = 0
 template <typename T, typename TComplex>
-__global__ void __launch_bounds__(TPB * TPB, 8) idct_idxstPreprocess(const T *input, TComplex *output, const int M, const int N,
+__global__ void __launch_bounds__(TPB * TPB, 8) idct_idxstPreprocess(const T *input, const T *weight, TComplex *output, const int M, const int N,
                                                                      const int halfM, const int halfN,
                                                                      const TComplex *__restrict__ expkM, const TComplex *__restrict__ expkN)
 {
@@ -334,7 +352,7 @@ __global__ void __launch_bounds__(TPB * TPB, 8) idct_idxstPreprocess(const T *in
             output[0].x = 0;
             output[0].y = 0;
 
-            tmp1 = input[halfN];
+            tmp1 = loadWeightedInput(input, weight, halfN);
             tmp_up.x = tmp1;
             tmp_up.y = tmp1;
             output[halfN] = complexConj(complexMul(expkN[halfN], tmp_up));
@@ -342,7 +360,7 @@ __global__ void __launch_bounds__(TPB * TPB, 8) idct_idxstPreprocess(const T *in
             output[INDEX(halfM, 0, halfN + 1)].x = 0;
             output[INDEX(halfM, 0, halfN + 1)].y = 0;
 
-            tmp1 = input[INDEX(halfM, halfN, N)];
+            tmp1 = loadWeightedInput(input, weight, INDEX(halfM, halfN, N));
             tmp_up.x = 0;
             tmp_up.y = 2 * tmp1;
             output[INDEX(halfM, halfN, halfN + 1)] = complexConj(complexMul(complexMul(expkM[halfM], expkN[halfN]), tmp_up));
@@ -352,12 +370,14 @@ __global__ void __launch_bounds__(TPB * TPB, 8) idct_idxstPreprocess(const T *in
         case 1:
         {
             TComplex tmp_up;
-            tmp_up.x = input[N - wid];
-            tmp_up.y = input[wid];
+            tmp_up.x = loadWeightedInput(input, weight, N - wid);
+            tmp_up.y = loadWeightedInput(input, weight, wid);
             output[wid] = complexConj(complexMul(expkN[wid], tmp_up));
 
-            T tmp1 = input[INDEX(halfM, N - wid, N)];
-            T tmp2 = input[INDEX(halfM, wid, N)];
+            T tmp1 = loadWeightedInput(
+                input, weight, INDEX(halfM, N - wid, N));
+            T tmp2 = loadWeightedInput(
+                input, weight, INDEX(halfM, wid, N));
             tmp_up.x = tmp1 - tmp2;
             tmp_up.y = tmp1 + tmp2;
             output[INDEX(halfM, wid, halfN + 1)] = complexConj(complexMul(complexMul(expkM[halfM], expkN[wid]), tmp_up));
@@ -374,8 +394,10 @@ __global__ void __launch_bounds__(TPB * TPB, 8) idct_idxstPreprocess(const T *in
             output[INDEX(M - hid, 0, halfN + 1)].x = 0;
             output[INDEX(M - hid, 0, halfN + 1)].y = 0;
 
-            tmp1 = input[INDEX(hid, halfN, N)];
-            tmp3 = input[INDEX(M - hid, halfN, N)];
+            tmp1 = loadWeightedInput(
+                input, weight, INDEX(hid, halfN, N));
+            tmp3 = loadWeightedInput(
+                input, weight, INDEX(M - hid, halfN, N));
             tmp_up.x = tmp1 - tmp3;
             tmp_up.y = tmp3 + tmp1;
             tmp_down.x = tmp3 - tmp1;
@@ -388,10 +410,14 @@ __global__ void __launch_bounds__(TPB * TPB, 8) idct_idxstPreprocess(const T *in
 
         case 3:
         {
-            T tmp1 = input[INDEX(hid, N - wid, N)];
-            T tmp2 = input[INDEX(hid, wid, N)];
-            T tmp3 = input[INDEX(M - hid, N - wid, N)];
-            T tmp4 = input[INDEX(M - hid, wid, N)];
+            T tmp1 = loadWeightedInput(
+                input, weight, INDEX(hid, N - wid, N));
+            T tmp2 = loadWeightedInput(
+                input, weight, INDEX(hid, wid, N));
+            T tmp3 = loadWeightedInput(
+                input, weight, INDEX(M - hid, N - wid, N));
+            T tmp4 = loadWeightedInput(
+                input, weight, INDEX(M - hid, wid, N));
             TComplex tmp_up, tmp_down;
             tmp_up.x = tmp1 - tmp4;
             tmp_up.y = tmp3 + tmp2;
@@ -411,12 +437,15 @@ __global__ void __launch_bounds__(TPB * TPB, 8) idct_idxstPreprocess(const T *in
 }
 
 template <typename T>
-void idct_idxstPreprocessCudaLauncher(const T *x, T *y, const int M, const int N,
-                                      const T *__restrict__ expkM, const T *__restrict__ expkN)
+void idct_idxstPreprocessCudaLauncher(
+    const T *x, const T *weight, T *y, const int M, const int N,
+    const T *__restrict__ expkM, const T *__restrict__ expkN)
 {
     dim3 gridSize((N / 2 + TPB - 1) / TPB, (M / 2 + TPB - 1) / TPB, 1);
     dim3 blockSize(TPB, TPB, 1);
-    idct_idxstPreprocess<T, ComplexType<T>><<<gridSize, blockSize>>>(x, (ComplexType<T> *)y, M, N, M / 2, N / 2, (ComplexType<T> *)expkM, (ComplexType<T> *)expkN);
+    idct_idxstPreprocess<T, ComplexType<T>><<<gridSize, blockSize>>>(
+        x, weight, (ComplexType<T> *)y, M, N, M / 2, N / 2,
+        (ComplexType<T> *)expkM, (ComplexType<T> *)expkN);
 }
 
 // Adpated from idct2d_postprocess() with changes on sign and scale
@@ -473,7 +502,7 @@ void idct_idxstPostprocessCudaLauncher(const T *x, T *y, const int M, const int 
 // else
 //     new_input[0][wid] = 0
 template <typename T, typename TComplex>
-__global__ void __launch_bounds__(TPB * TPB, 8) idxst_idctPreprocess(const T *input, TComplex *output, const int M, const int N,
+__global__ void __launch_bounds__(TPB * TPB, 8) idxst_idctPreprocess(const T *input, const T *weight, TComplex *output, const int M, const int N,
                                                                      const int halfM, const int halfN,
                                                                      const TComplex *__restrict__ expkM, const TComplex *__restrict__ expkN)
 {
@@ -495,12 +524,12 @@ __global__ void __launch_bounds__(TPB * TPB, 8) idxst_idctPreprocess(const T *in
             output[halfN].x = 0;
             output[halfN].y = 0;
 
-            tmp1 = input[INDEX(halfM, 0, N)];
+            tmp1 = loadWeightedInput(input, weight, INDEX(halfM, 0, N));
             tmp_up.x = tmp1;
             tmp_up.y = tmp1;
             output[INDEX(halfM, 0, halfN + 1)] = complexConj(complexMul(expkM[halfM], tmp_up));
 
-            tmp1 = input[INDEX(halfM, halfN, N)];
+            tmp1 = loadWeightedInput(input, weight, INDEX(halfM, halfN, N));
             tmp_up.x = 0;
             tmp_up.y = 2 * tmp1;
             output[INDEX(halfM, halfN, halfN + 1)] = complexConj(complexMul(complexMul(expkM[halfM], expkN[halfN]), tmp_up));
@@ -513,8 +542,10 @@ __global__ void __launch_bounds__(TPB * TPB, 8) idxst_idctPreprocess(const T *in
             output[wid].y = 0;
 
             TComplex tmp_up;
-            T tmp1 = input[INDEX(halfM, wid, N)];
-            T tmp2 = input[INDEX(halfM, N - wid, N)];
+            T tmp1 = loadWeightedInput(
+                input, weight, INDEX(halfM, wid, N));
+            T tmp2 = loadWeightedInput(
+                input, weight, INDEX(halfM, N - wid, N));
             tmp_up.x = tmp1 - tmp2;
             tmp_up.y = tmp1 + tmp2;
             output[INDEX(halfM, wid, halfN + 1)] = complexConj(complexMul(complexMul(expkM[halfM], expkN[wid]), tmp_up));
@@ -526,8 +557,9 @@ __global__ void __launch_bounds__(TPB * TPB, 8) idxst_idctPreprocess(const T *in
             T tmp1, tmp3;
             TComplex tmp_up, tmp_down;
 
-            tmp1 = input[INDEX(M - hid, 0, N)];
-            tmp3 = input[INDEX(hid, 0, N)];
+            tmp1 = loadWeightedInput(
+                input, weight, INDEX(M - hid, 0, N));
+            tmp3 = loadWeightedInput(input, weight, INDEX(hid, 0, N));
             tmp_up.x = tmp1;
             tmp_up.y = tmp3;
             tmp_down.x = tmp3;
@@ -536,8 +568,10 @@ __global__ void __launch_bounds__(TPB * TPB, 8) idxst_idctPreprocess(const T *in
             output[INDEX(hid, 0, halfN + 1)] = complexConj(complexMul(expkM[hid], tmp_up));
             output[INDEX(M - hid, 0, halfN + 1)] = complexConj(complexMul(expkM[M - hid], tmp_down));
 
-            tmp1 = input[INDEX(M - hid, halfN, N)];
-            tmp3 = input[INDEX(hid, halfN, N)];
+            tmp1 = loadWeightedInput(
+                input, weight, INDEX(M - hid, halfN, N));
+            tmp3 = loadWeightedInput(
+                input, weight, INDEX(hid, halfN, N));
             tmp_up.x = tmp1 - tmp3;
             tmp_up.y = tmp3 + tmp1;
             tmp_down.x = tmp3 - tmp1;
@@ -550,10 +584,14 @@ __global__ void __launch_bounds__(TPB * TPB, 8) idxst_idctPreprocess(const T *in
 
         case 3:
         {
-            T tmp1 = input[INDEX(M - hid, wid, N)];
-            T tmp2 = input[INDEX(M - hid, N - wid, N)];
-            T tmp3 = input[INDEX(hid, wid, N)];
-            T tmp4 = input[INDEX(hid, N - wid, N)];
+            T tmp1 = loadWeightedInput(
+                input, weight, INDEX(M - hid, wid, N));
+            T tmp2 = loadWeightedInput(
+                input, weight, INDEX(M - hid, N - wid, N));
+            T tmp3 = loadWeightedInput(
+                input, weight, INDEX(hid, wid, N));
+            T tmp4 = loadWeightedInput(
+                input, weight, INDEX(hid, N - wid, N));
             TComplex tmp_up, tmp_down;
             tmp_up.x = tmp1 - tmp4;
             tmp_up.y = tmp3 + tmp2;
@@ -575,6 +613,7 @@ __global__ void __launch_bounds__(TPB * TPB, 8) idxst_idctPreprocess(const T *in
 template <typename T>
 void idxst_idctPreprocessCudaLauncher(
     const T *x,
+    const T *weight,
     T *y,
     const int M,
     const int N,
@@ -583,7 +622,9 @@ void idxst_idctPreprocessCudaLauncher(
 {
     dim3 gridSize((N / 2 + TPB - 1) / TPB, (M / 2 + TPB - 1) / TPB, 1);
     dim3 blockSize(TPB, TPB, 1);
-    idxst_idctPreprocess<T, ComplexType<T>><<<gridSize, blockSize>>>(x, (ComplexType<T> *)y, M, N, M / 2, N / 2, (ComplexType<T> *)expkM, (ComplexType<T> *)expkN);
+    idxst_idctPreprocess<T, ComplexType<T>><<<gridSize, blockSize>>>(
+        x, weight, (ComplexType<T> *)y, M, N, M / 2, N / 2,
+        (ComplexType<T> *)expkM, (ComplexType<T> *)expkN);
 }
 
 // Adpated from idct2d_postprocess() with changes on sign and scale
@@ -660,6 +701,7 @@ REGISTER_DCT2DPOSTPROCESS_KERNEL_LAUNCHER(double);
 #define REGISTER_IDCT_IDXSTPREPROCESS_KERNEL_LAUNCHER(type) \
     template void idct_idxstPreprocessCudaLauncher<type>(       \
         const type *x,                                      \
+        const type *weight,                                 \
         type *y,                                            \
         const int M,                                        \
         const int N,                                        \
@@ -683,6 +725,7 @@ REGISTER_IDCT_IDXSTPOSTPROCESS_KERNEL_LAUNCHER(double);
 #define REGISTER_IDXST_IDCTPREPROCESS_KERNEL_LAUNCHER(type) \
     template void idxst_idctPreprocessCudaLauncher<type>(       \
         const type *x,                                      \
+        const type *weight,                                 \
         type *y,                                            \
         const int M,                                        \
         const int N,                                        \

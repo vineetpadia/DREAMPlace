@@ -772,6 +772,27 @@ class DXTOpTest(unittest.TestCase):
             # note the scale factor
             np.testing.assert_allclose(idxst_idct_value.data.numpy(), golden_value* 2, atol=1e-14)
 
+    @unittest.skipUnless(torch.cuda.device_count(), "CUDA is required")
+    def test_weighted_inverse_transforms(self):
+        torch.manual_seed(19)
+        M = 64
+        N = 128
+        for test_dtype in (torch.float32, torch.float64):
+            x = torch.randn(M, N, dtype=test_dtype, device="cuda")
+            weight = torch.randn(M, N, dtype=test_dtype, device="cuda")
+            expkM = discrete_spectral_transform.get_exact_expk(
+                M, dtype=test_dtype, device=x.device)
+            expkN = discrete_spectral_transform.get_exact_expk(
+                N, dtype=test_dtype, device=x.device)
+
+            for transform in (dct2_fft2.IDCT_IDXST,
+                              dct2_fft2.IDXST_IDCT):
+                with self.subTest(dtype=test_dtype, transform=transform):
+                    reference = transform(expkM, expkN)(x.mul(weight))
+                    result = transform(expkM, expkN)(x, weight)
+                    self.assertTrue(torch.equal(result, reference))
+
+
 def eval_torch_rfft1d(x, runs):
     for i in range(100):
         a = torch.rfft(x, signal_ndim=1, onesided=True)
