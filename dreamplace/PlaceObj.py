@@ -331,7 +331,14 @@ class PlaceObj(nn.Module):
         if len(self.placedb.regions) > 0:
             result = self.wirelength + self.density_weight.dot(self.density)
         else:
-            result = torch.add(self.wirelength, self.density, alpha=(self.density_factor * self.density_weight).item())
+            density_scale = (
+                self.density_weight
+                if self.density_factor == 1
+                else self.density_factor * self.density_weight
+            )
+            result = torch.addcmul(
+                self.wirelength, self.density, density_scale
+            )
 
         return result
 
