@@ -1090,8 +1090,8 @@ void global_swap(DetailedPlaceDB<T>& db, SwapState<T>& state)
 #endif
     // compute_candidate_position<<<(state.max_num_candidates_all/256),
     // 256>>>(db, state);
-    compute_candidate_cost<<<ceilDiv(state.max_num_candidates_all, 64),
-                             64 * 4>>>(db, state);
+    compute_candidate_cost<<<ceilDiv(state.max_num_candidates_all, 32),
+                             32 * 4>>>(db, state);
 #ifdef TIMER
     checkCUDA(cudaDeviceSynchronize());
     timer_stop = CPUTimer::getGlobaltime();
