@@ -947,8 +947,11 @@ void k_reorder(
             net_box_threads>>>(
             db, state, group_id, group_size, offset, instance_token_bgn);
         // print_instance_net_bboxes<<<1, 1>>>(state, group_id, offset);
+        constexpr int reorder_hpwl_threads = 128;
         compute_reorder_hpwl<<<
-            ceilDiv(group_size * state.num_permutations, 256), 256>>>(
+            ceilDiv(group_size * state.num_permutations,
+                    reorder_hpwl_threads),
+            reorder_hpwl_threads>>>(
             db, state, group_id, group_size * state.num_permutations, offset);
 #ifdef K_REORDER_PROFILE
         checkCUDA(cudaDeviceSynchronize());
