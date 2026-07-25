@@ -32,7 +32,7 @@ at::Tensor pin_pos_forward(at::Tensor pos, at::Tensor pin_offset_x,
   CHECK_EVEN(pos);
   CHECK_CONTIGUOUS(pos);
 
-  auto out = at::zeros(pin_offset_x.numel() * 2, pos.options());
+  auto out = at::empty(pin_offset_x.numel() * 2, pos.options());
   int num_nodes = pos.numel() / 2;
   int num_pins = pin_offset_x.numel();
 
