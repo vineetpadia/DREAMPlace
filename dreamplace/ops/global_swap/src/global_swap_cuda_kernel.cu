@@ -566,7 +566,7 @@ __global__ void reset_state(DetailedPlaceDB<T> db, SwapState<T> state) {
   for (int i = blockIdx.x * blockDim.x + threadIdx.x;
        i < state.max_num_candidates_all; i += blockDim.x * gridDim.x) {
     SwapCandidate<T>& cand = state.candidates[i];
-    cand.cost = 0;
+    cand.cost = DREAMPLACE_CUDA_NAMESPACE::numeric_limits<T>::max();
     cand.node_id[0] = DREAMPLACE_CUDA_NAMESPACE::numeric_limits<int>::max();
     cand.node_id[1] = DREAMPLACE_CUDA_NAMESPACE::numeric_limits<int>::max();
     cand.node_xl[0][0] = 0;
@@ -736,15 +736,6 @@ __global__ void compute_candidate_position(DetailedPlaceDB<T> db,
         cand.node_id[1] < db.num_movable_nodes) {
       cand.cost = compute_positions(db, state, cand);
     }
-  }
-}
-
-template <typename T>
-__global__ void reset_candidate_costs(DetailedPlaceDB<T> db,
-                                      SwapState<T> state) {
-  for (int i = blockIdx.x * blockDim.x + threadIdx.x;
-       i < state.max_num_candidates_all; i += blockDim.x * gridDim.x) {
-    state.candidates[i].cost = DREAMPLACE_CUDA_NAMESPACE::numeric_limits<T>::max();
   }
 }
 
@@ -1107,9 +1098,6 @@ void global_swap(DetailedPlaceDB<T>& db, SwapState<T>& state)
 #ifdef TIMER
     timer_start = CPUTimer::getGlobaltime();
 #endif
-    reset_candidate_costs<<<ceilDiv(state.max_num_candidates_all, 256), 256>>>(
-        db, state);
-
     // compute_candidate_position<<<(state.max_num_candidates_all/256),
     // 256>>>(db, state);
     compute_candidate_cost<<<ceilDiv(state.max_num_candidates_all, 64), 64 * 4,
