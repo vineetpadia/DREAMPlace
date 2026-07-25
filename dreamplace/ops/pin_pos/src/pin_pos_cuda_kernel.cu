@@ -38,7 +38,7 @@ int computePinPosCudaLauncher(
 	T* pin_x, T* pin_y
     )
 {
-	int thread_count = 512;
+	int thread_count = 256;
 
 	computePinPos<<<(num_pins+thread_count-1) / thread_count, thread_count, 0, DREAMPLACE_STREAM>>>(x, y, pin_offset_x, pin_offset_y, pin2node_map, num_pins, pin_x, pin_y);
 
@@ -88,7 +88,7 @@ int computePinPosGradCudaLauncher(
 	T* grad_x, T* grad_y
     )
 {
-    int thread_count = 512;
+	int thread_count = 64;
 
     computeNodeGrad<<<(num_nodes + thread_count - 1) / thread_count, thread_count, 0, DREAMPLACE_STREAM>>>(
             grad_out_x, 
