@@ -421,10 +421,14 @@ class NonLinearPlace(BasicPlace.BasicPlace):
                     # For backward compatibility
                     # PyTorch 1.7 introduced zero_grad(set_to_none=False)
                     # PyTorch 2.0 changed set_to_none=True
-                    if zero_grad_supports_set_to_none:
-                        optimizer.zero_grad(set_to_none=False)
-                    else:
-                        optimizer.zero_grad()
+                    # Nesterov evaluates its objective through
+                    # obj_and_grad_fn, which clears the candidate's gradient
+                    # immediately before every backward pass.
+                    if optimizer_name.lower() != "nesterov":
+                        if zero_grad_supports_set_to_none:
+                            optimizer.zero_grad(set_to_none=False)
+                        else:
+                            optimizer.zero_grad()
 
                     # t1 = time.time()
                     cur_metric.evaluate(placedb, eval_ops, pos, model.data_collections)
