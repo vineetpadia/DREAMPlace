@@ -124,91 +124,156 @@ void compute_orig_and_solution_costs(
     }
 }
 
-template <typename DetailedPlaceDBType, typename IndependentSetMatchingStateType>
-__global__ void store_orig_pos_kernel(DetailedPlaceDBType db, IndependentSetMatchingStateType state)
+template <
+    typename DetailedPlaceDBType,
+    typename IndependentSetMatchingStateType,
+    int BlockDim>
+__global__ void apply_solution_kernel(
+        DetailedPlaceDBType db,
+        IndependentSetMatchingStateType state)
 {
-    int i = blockIdx.x; // set 
-    const int* __restrict__ independent_set = state.independent_sets + i*state.set_size; 
-    auto orig_x = state.orig_x + i*state.set_size; 
-    auto orig_y = state.orig_y + i*state.set_size; 
-    auto orig_spaces = state.orig_spaces + i*state.set_size; 
-    for (int j = threadIdx.x; j < state.set_size; j += blockDim.x)
-    {
-        int node_id = independent_set[j];
-        if (node_id < db.num_movable_nodes)
-        {
-            assert(node_id >= 0);
-            orig_x[j] = db.x[node_id]; 
-            orig_y[j] = db.y[node_id]; 
-            orig_spaces[j] = state.spaces[node_id]; 
-#ifdef DEBUG
-            if (!(orig_x[j] >= db.xl && orig_x[j] < db.xh && orig_y[j] >= db.yl && orig_y[j] < db.yh))
-            {
-                printf("[E] node %d (%g, %g) (%g, %g) out of bounds\n", node_id, db.x[node_id], db.y[node_id], orig_x[j], orig_y[j]);
-            }
-            assert(orig_x[j] >= db.xl && orig_x[j] < db.xh && orig_y[j] >= db.yl && orig_y[j] < db.yh);
-#endif
-        }
-    }
-}
+    typedef typename IndependentSetMatchingStateType::type T;
+    __shared__ T orig_x[BlockDim];
+    __shared__ T orig_y[BlockDim];
+    __shared__ Space<T> orig_spaces[BlockDim];
 
-template <typename DetailedPlaceDBType, typename IndependentSetMatchingStateType>
-__global__ void move_nodes_kernel(DetailedPlaceDBType db, IndependentSetMatchingStateType state)
-{
     int i = blockIdx.x; // set 
-    int idx = i*state.set_size; 
+    int j = threadIdx.x;
+    int idx = i*state.set_size;
+    const int* __restrict__ independent_set =
+        state.independent_sets + idx;
+    int node_id = independent_set[j];
+
+    if (node_id < db.num_movable_nodes)
+    {
+        assert(node_id >= 0);
+        orig_x[j] = db.x[node_id];
+        orig_y[j] = db.y[node_id];
+        orig_spaces[j] = state.spaces[node_id];
+#ifdef DEBUG
+        if (!(orig_x[j] >= db.xl && orig_x[j] < db.xh &&
+              orig_y[j] >= db.yl && orig_y[j] < db.yh))
+        {
+            printf("[E] node %d (%g, %g) (%g, %g) out of bounds\n",
+                   node_id, db.x[node_id], db.y[node_id],
+                   orig_x[j], orig_y[j]);
+        }
+        assert(orig_x[j] >= db.xl && orig_x[j] < db.xh &&
+               orig_y[j] >= db.yl && orig_y[j] < db.yh);
+#endif
+    }
+
+    __syncthreads();
 
     if (state.stop_flags[i])
     {
         // encourage movement 
         if (state.orig_costs[idx] <= state.solution_costs[idx])
         {
-            const int* __restrict__ independent_set = state.independent_sets + i*state.set_size; 
-            const int* __restrict__ solution = state.solutions + i*state.set_size; 
-            const typename IndependentSetMatchingStateType::type* __restrict__ orig_x = state.orig_x + i*state.set_size; 
-            const typename IndependentSetMatchingStateType::type* __restrict__ orig_y = state.orig_y + i*state.set_size; 
-            const Space<typename IndependentSetMatchingStateType::type>* __restrict__ orig_spaces = state.orig_spaces + i*state.set_size; 
-            for (int j = threadIdx.x; j < state.set_size; j += blockDim.x)
+            const int* __restrict__ solution = state.solutions + idx;
+            int sol_k = solution[j];
+#ifdef DEBUG
+            assert(node_id >= 0);
+            assert(sol_k >= 0 && sol_k < state.set_size);
+#endif
+            if (node_id < db.num_movable_nodes)
             {
-                int node_id = independent_set[j];
-                int sol_k = solution[j]; 
+                auto node_width = db.node_size_x[node_id];
+
 #ifdef DEBUG
-                assert(node_id >= 0);
-                assert(sol_k >= 0 && sol_k < state.set_size);
+                int pos_id = independent_set[sol_k];
+                assert(pos_id >= 0 && pos_id < db.num_movable_nodes);
 #endif
-                if (node_id < db.num_movable_nodes)
+
+                auto& x = db.x[node_id];
+                auto& y = db.y[node_id];
+                auto& space = state.spaces[node_id];
+                if (j != sol_k)
                 {
-                    auto node_width = db.node_size_x[node_id];
-
+                    atomicAdd(state.device_num_moved, 1);
+                    auto const& orig_space = orig_spaces[sol_k];
+                    x = orig_x[sol_k];
+                    bool ret = adjust_pos(x, node_width, orig_space);
+                    assert(ret);
+                    y = orig_y[sol_k];
+                    space = orig_space;
 #ifdef DEBUG
-                    int pos_id = independent_set[sol_k]; 
-                    assert(pos_id >= 0 && pos_id < db.num_movable_nodes);
-#endif
-
-                    auto& x = db.x[node_id]; 
-                    auto& y = db.y[node_id];
-                    auto& space = state.spaces[node_id];
-                    if (j != sol_k)
+                    assert(db.node_size_x[node_id] <=
+                           orig_space.xh-orig_space.xl);
+                    if (x < db.xl || x > db.xh ||
+                        y < db.yl || y > db.yh)
                     {
-                        atomicAdd(state.device_num_moved, 1);
-                        auto const& orig_space = orig_spaces[sol_k]; 
-                        x = orig_x[sol_k]; 
-                        bool ret = adjust_pos(x, node_width, orig_space);
-                        assert(ret);
-                        y = orig_y[sol_k]; 
-                        space = orig_space; 
-#ifdef DEBUG
-                        assert(db.node_size_x[node_id] <= orig_space.xh-orig_space.xl);
-                        if (x < db.xl || x > db.xh || y < db.yl || y > db.yh)
-                        {
-                            printf("[E] applying cost matrix %d, j %d, node_id %d, space (%g, %g), sol_k %d, pos_id %d, space (%g, %g)\n", i, j, node_id, space.xl, space.xh, sol_k, independent_set[sol_k], orig_space.xh, orig_space.xl);
-                        }
-                        assert(!(x < db.xl || x > db.xh || y < db.yl || y > db.yh));
-#endif
+                        printf("[E] applying cost matrix %d, j %d, node_id %d, space (%g, %g), sol_k %d, pos_id %d, space (%g, %g)\n", i, j, node_id, space.xl, space.xh, sol_k, independent_set[sol_k], orig_space.xh, orig_space.xl);
                     }
+                    assert(!(x < db.xl || x > db.xh ||
+                             y < db.yl || y > db.yh));
+#endif
                 }
             }
         }
+    }
+}
+
+template <typename DetailedPlaceDBType, typename IndependentSetMatchingStateType>
+void apply_solution_positions(
+        DetailedPlaceDBType db,
+        IndependentSetMatchingStateType state)
+{
+    switch (state.set_size)
+    {
+        case 2:
+            apply_solution_kernel<
+                DetailedPlaceDBType, IndependentSetMatchingStateType, 2>
+                <<<state.num_independent_sets, 2>>>(db, state);
+            break;
+        case 4:
+            apply_solution_kernel<
+                DetailedPlaceDBType, IndependentSetMatchingStateType, 4>
+                <<<state.num_independent_sets, 4>>>(db, state);
+            break;
+        case 8:
+            apply_solution_kernel<
+                DetailedPlaceDBType, IndependentSetMatchingStateType, 8>
+                <<<state.num_independent_sets, 8>>>(db, state);
+            break;
+        case 16:
+            apply_solution_kernel<
+                DetailedPlaceDBType, IndependentSetMatchingStateType, 16>
+                <<<state.num_independent_sets, 16>>>(db, state);
+            break;
+        case 32:
+            apply_solution_kernel<
+                DetailedPlaceDBType, IndependentSetMatchingStateType, 32>
+                <<<state.num_independent_sets, 32>>>(db, state);
+            break;
+        case 64:
+            apply_solution_kernel<
+                DetailedPlaceDBType, IndependentSetMatchingStateType, 64>
+                <<<state.num_independent_sets, 64>>>(db, state);
+            break;
+        case 128:
+            apply_solution_kernel<
+                DetailedPlaceDBType, IndependentSetMatchingStateType, 128>
+                <<<state.num_independent_sets, 128>>>(db, state);
+            break;
+        case 256:
+            apply_solution_kernel<
+                DetailedPlaceDBType, IndependentSetMatchingStateType, 256>
+                <<<state.num_independent_sets, 256>>>(db, state);
+            break;
+        case 512:
+            apply_solution_kernel<
+                DetailedPlaceDBType, IndependentSetMatchingStateType, 512>
+                <<<state.num_independent_sets, 512>>>(db, state);
+            break;
+        case 1024:
+            apply_solution_kernel<
+                DetailedPlaceDBType, IndependentSetMatchingStateType, 1024>
+                <<<state.num_independent_sets, 1024>>>(db, state);
+            break;
+        default:
+            dreamplaceAssertMsg(
+                0, "unsupported set size %d", state.set_size);
     }
 }
 
@@ -302,8 +367,7 @@ void apply_solution(DetailedPlaceDBType& db, IndependentSetMatchingStateType& st
     //check_hpwl_kernel<<<1, 1>>>(db, state, state.independent_sets+state.set_size*3);
 #endif
 
-    store_orig_pos_kernel<<<state.num_independent_sets, state.set_size>>>(db, state); 
-    move_nodes_kernel<<<state.num_independent_sets, state.set_size>>>(db, state);
+    apply_solution_positions(db, state);
     checkCUDA(cudaMemcpy(&state.num_moved, state.device_num_moved, sizeof(int), cudaMemcpyDeviceToHost));
 #ifdef DEBUG
     //check_hpwl_kernel<<<1, 1>>>(db, state, state.independent_sets+state.set_size*3);
