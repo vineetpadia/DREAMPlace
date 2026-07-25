@@ -15,6 +15,7 @@
 #include <time.h>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <random>
 
 //#define DEBUG
@@ -77,12 +78,13 @@ struct KReorderState {
       instance_nets;  ///< reorder_instances.size2 * MAX_NUM_NETS_PER_INSTANCE
   int* instance_nets_size;      ///< reorder_instances.size2, number of nets for
                                 ///< each instance
-  int* node2inst_map;           ///< map cell to instance
+  int* node2inst_map;           ///< map cell to instance/token
   int* net_markers;             ///< whether a net is in this group
   unsigned char* node_markers;  ///< cell offset in instance
 
   int* device_num_moved;
   int K;  ///< number of cells to reorder
+  int next_instance_token;
 
   double* net_hpwls;  ///< used for compute HPWL
 };
@@ -196,7 +198,8 @@ inline __device__ typename DetailedPlaceDBType::type compute_instance_hpwl(
 template <typename DetailedPlaceDBType, typename StateType>
 __global__ void compute_instance_net_boxes(DetailedPlaceDBType db,
                                            StateType state, int group_id,
-                                           int offset) {
+                                           int offset,
+                                           int instance_token_bgn) {
   typedef typename DetailedPlaceDBType::type T;
   __shared__ int group_size;
   if (threadIdx.x == 0) {
@@ -252,8 +255,14 @@ __global__ void compute_instance_net_boxes(DetailedPlaceDBType db,
         if (other_node_id < db.num_nodes)  // other_node_id may exceed
                                            // db.num_nodes like IO pins
         {
+#if defined(DETERMINISTIC) && !defined(DYNAMIC)
+          int other_node_found =
+              (state.node2inst_map[other_node_id] ==
+               instance_token_bgn + inst_id);
+#else
           int other_node_found =
               (state.node2inst_map[other_node_id] == inst_id);
+#endif
           if (!other_node_found)  // not found
           {
             T other_node_xl = db.x[other_node_id];
@@ -508,7 +517,8 @@ __global__ void apply_reorder(DetailedPlaceDBType db, StateType state,
 template <typename T>
 __global__ void compute_node2inst_map(DetailedPlaceDB<T> db,
                                       KReorderState<T> state, int group_id,
-                                      int offset) {
+                                      int offset,
+                                      int instance_token_bgn) {
   __shared__ int group_size;
   if (threadIdx.x == 0) {
     group_size = state.reorder_instances.size(group_id);
@@ -530,7 +540,11 @@ __global__ void compute_node2inst_map(DetailedPlaceDB<T> db,
       int node_id = row2nodes[j];
       // do not update for fixed cells
       if (node_id < db.num_movable_nodes) {
+#if defined(DETERMINISTIC) && !defined(DYNAMIC)
+        state.node2inst_map[node_id] = instance_token_bgn + inst_id;
+#else
         state.node2inst_map[node_id] = inst_id;
+#endif
         state.node_markers[node_id] = j;
       }
     }
@@ -929,9 +943,21 @@ void k_reorder(
 #ifdef K_REORDER_PROFILE
         timer_start = TIMER::getGlobaltime();
 #endif
+#if defined(DETERMINISTIC) && !defined(DYNAMIC)
+        if (state.next_instance_token >
+            std::numeric_limits<int>::max() - group_size) {
+          checkCUDA(
+              cudaMemset(state.node2inst_map, 0, db.num_nodes * sizeof(int)));
+          state.next_instance_token = 1;
+        }
+        int instance_token_bgn = state.next_instance_token;
+        state.next_instance_token += group_size;
+#else
+        int instance_token_bgn = 0;
         reset_state<<<64, 512>>>(db, state);
+#endif
         compute_node2inst_map<<<ceilDiv(group_size, 256), 256>>>(
-            db, state, group_id, offset);
+            db, state, group_id, offset, instance_token_bgn);
 #ifndef DETERMINISTIC
         compute_net_markers<<<ceilDiv(db.num_movable_nodes, 256), 256>>>(db,
                                                                          state);
@@ -950,7 +976,7 @@ void k_reorder(
         // check_instance_nets<<<1, 1>>>(db, state, group_id);
         compute_instance_net_boxes<<<
             ceilDiv(group_size * MAX_NUM_NETS_PER_INSTANCE, 256), 256>>>(
-            db, state, group_id, offset);
+            db, state, group_id, offset, instance_token_bgn);
         // print_instance_net_bboxes<<<1, 1>>>(state, group_id, offset);
         compute_reorder_hpwl<<<
             ceilDiv(group_size * state.num_permutations, 256), 256>>>(
@@ -1134,6 +1160,11 @@ int kreorderCUDALauncher(DetailedPlaceDB<T> db, int K, int max_iters,
                  InstanceNet<T>);
     allocateCUDA(state.instance_nets_size, state.reorder_instances.size2, int);
     allocateCUDA(state.node2inst_map, db.num_nodes, int);
+#if defined(DETERMINISTIC) && !defined(DYNAMIC)
+    state.next_instance_token = 1;
+    checkCUDA(
+        cudaMemset(state.node2inst_map, 0, db.num_nodes * sizeof(int)));
+#endif
     allocateCUDA(state.net_markers, db.num_nets, int);
     allocateCUDA(state.node_markers, db.num_nodes, unsigned char);
     allocateCUDA(state.device_num_moved, 1, int);
