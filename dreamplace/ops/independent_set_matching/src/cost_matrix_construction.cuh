@@ -58,31 +58,40 @@ __global__ void compute_cost_matrix_kernel(DetailedPlaceDBType db, IndependentSe
         node2pin_id_end = min(
             node2pin_id_bgn+MAX_NODE_DEGREE, node2pin_id_end);
 
-        for (int node2pin_id = node2pin_id_bgn + threadIdx.x;
-             node2pin_id < node2pin_id_end;
-             node2pin_id += blockDim.x)
+        constexpr int net_threads = 4;
+        int net_lane = threadIdx.x & (net_threads - 1);
+        int idx = threadIdx.x / net_threads;
+        int num_node_pins = node2pin_id_end - node2pin_id_bgn;
+        if (idx < num_node_pins)
         {
-            int idx = node2pin_id - node2pin_id_bgn;
+            int node2pin_id = node2pin_id_bgn + idx;
             int node_pin_id = db.flat_node2pin_map[node2pin_id];
             int net_id = db.pin2net_map[node_pin_id];
 #ifdef DEBUG
             assert(node_pin_id >= 0 && node_pin_id < db.num_pins);
             assert(net_id >= 0 && net_id < db.num_nets);
 #endif
-            pin_offset_x[idx] = db.pin_offset_x[node_pin_id];
-            pin_offset_y[idx] = db.pin_offset_y[node_pin_id];
-            net_enabled[idx] = db.net_mask[net_id];
-            auto& box = net_boxes[idx];
+            unsigned char enabled = db.net_mask[net_id];
+            if (net_lane == 0)
+            {
+                pin_offset_x[idx] = db.pin_offset_x[node_pin_id];
+                pin_offset_y[idx] = db.pin_offset_y[node_pin_id];
+                net_enabled[idx] = enabled;
+            }
+
+            DreamPlace::Utility::SharedBox<
+                typename DetailedPlaceDBType::type> box;
             box.xl = db.xh;
             box.yl = db.yh;
             box.xh = db.xl;
             box.yh = db.yl;
-            if (net_enabled[idx])
+            if (enabled)
             {
                 int net2pin_id_bgn = db.flat_net2pin_start_map[net_id];
                 int net2pin_id_end = db.flat_net2pin_start_map[net_id+1];
-                for (int net2pin_id = net2pin_id_bgn;
-                     net2pin_id < net2pin_id_end; ++net2pin_id)
+                for (int net2pin_id = net2pin_id_bgn + net_lane;
+                     net2pin_id < net2pin_id_end;
+                     net2pin_id += net_threads)
                 {
                     int net_pin_id = db.flat_net2pin_map[net2pin_id];
                     int other_node_id = db.pin2node_map[net_pin_id];
@@ -98,6 +107,30 @@ __global__ void compute_cost_matrix_kernel(DetailedPlaceDBType db, IndependentSe
                         box.yh = max(box.yh, yyl);
                     }
                 }
+            }
+
+            unsigned int active_mask = __activemask();
+            for (int offset = net_threads / 2; offset > 0; offset >>= 1)
+            {
+                auto other_xl =
+                    __shfl_down_sync(active_mask, box.xl, offset, net_threads);
+                auto other_yl =
+                    __shfl_down_sync(active_mask, box.yl, offset, net_threads);
+                auto other_xh =
+                    __shfl_down_sync(active_mask, box.xh, offset, net_threads);
+                auto other_yh =
+                    __shfl_down_sync(active_mask, box.yh, offset, net_threads);
+                if (net_lane < offset)
+                {
+                    box.xl = min(box.xl, other_xl);
+                    box.yl = min(box.yl, other_yl);
+                    box.xh = max(box.xh, other_xh);
+                    box.yh = max(box.yh, other_yh);
+                }
+            }
+            if (net_lane == 0)
+            {
+                net_boxes[idx] = box;
             }
         }
     }
