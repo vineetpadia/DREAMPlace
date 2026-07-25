@@ -14,6 +14,12 @@ import torch
 from torch.optim.optimizer import Optimizer, required
 import torch.nn as nn
 import pdb
+import dreamplace.configure as configure
+
+if configure.compile_configurations["CUDA_FOUND"] == "TRUE":
+    import dreamplace.ops.nesterov_update.nesterov_update_cuda as nesterov_update_cuda
+else:
+    nesterov_update_cuda = None
 
 
 def _nesterov_acceleration_float32(a_k):
@@ -163,12 +169,18 @@ class NesterovAcceleratedGradientOptimizer(Optimizer):
                     # Optimizer state updates are not part of the objective's
                     # autograd graph. Using the value view avoids constructing
                     # and immediately discarding a graph every iteration.
-                    torch.mul(alpha_k, g_k, out=u_kp1)
-                    torch.sub(v_k.data, u_kp1, out=u_kp1)
-                    #constraint_fn(u_kp1)
-                    torch.sub(u_kp1, u_k, out=v_kp1.data)
-                    v_kp1.data.mul_(coef)
-                    torch.add(u_kp1, v_kp1.data, out=v_kp1.data)
+                    if (nesterov_update_cuda is not None and u_kp1.is_cuda
+                            and isinstance(a_k, np.float32)):
+                        nesterov_update_cuda.forward(
+                            v_k.data, g_k, u_k, alpha_k, coef,
+                            u_kp1, v_kp1.data)
+                    else:
+                        torch.mul(alpha_k, g_k, out=u_kp1)
+                        torch.sub(v_k.data, u_kp1, out=u_kp1)
+                        #constraint_fn(u_kp1)
+                        torch.sub(u_kp1, u_k, out=v_kp1.data)
+                        v_kp1.data.mul_(coef)
+                        torch.add(u_kp1, v_kp1.data, out=v_kp1.data)
                     # make sure v_kp1 subjects to constraints
                     # g_kp1 must correspond to v_kp1
                     constraint_fn(v_kp1)
