@@ -251,9 +251,25 @@ class NesterovAcceleratedGradientOptimizer(Optimizer):
                 # v_k_1, g_k_1, and obj_k_1 are only used to initialize
                 # alpha_k in non-BB mode. No later iteration reads them.
                 group['u_k'][i], group['u_kp1'][i] = u_kp1, u_k
-                v_k.data.copy_(v_kp1.data)
-                g_k.data.copy_(g_kp1.data)
-                obj_k.data.copy_(f_kp1.data)
+                # The candidate is a private, same-shaped scratch tensor.
+                # Rotate its storage into the public parameter instead of
+                # copying the full position vector.
+                current_position = v_k.data
+                v_k.data = v_kp1.data
+                v_kp1.data = current_position
+                # DREAMPlace returns v_kp1.grad directly. Keep that accepted
+                # gradient and rotate the old saved-gradient tensor into the
+                # scratch variable for its next backward pass. Preserve a
+                # copy fallback for callbacks that return another tensor.
+                if (
+                    v_kp1.grad is not None
+                    and v_kp1.grad.data_ptr() == g_kp1.data_ptr()
+                ):
+                    v_kp1.grad = g_k
+                    group['g_k'][i] = g_kp1.data
+                else:
+                    g_k.data.copy_(g_kp1.data)
+                group['obj_k'][i] = f_kp1.data
                 if isinstance(a_k, np.float32):
                     group['a_k'][i] = a_kp1
                 else:
