@@ -1077,7 +1077,7 @@ void global_swap(DetailedPlaceDB<T>& db, SwapState<T>& state)
 #endif
     reset_state<<<ceilDiv(db.num_movable_nodes, 512), 512>>>(db, state);
     dim3 grid(5, (idx_end - idx_bgn), 1);
-    collect_candidates<<<grid, 256>>>(db, state, idx_bgn, idx_end);
+    collect_candidates<<<grid, 32>>>(db, state, idx_bgn, idx_end);
 #ifdef TIMER
     checkCUDA(cudaDeviceSynchronize());
     timer_stop = CPUTimer::getGlobaltime();
