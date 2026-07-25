@@ -102,26 +102,46 @@ struct ReduceMinOP
     }
 };
 
-template <typename DetailedPlaceDBType, typename IndependentSetMatchingStateType, int ThreadsPerBlock=128>
+template <
+    typename DetailedPlaceDBType,
+    typename IndependentSetMatchingStateType,
+    int ThreadsPerBlock = 128,
+    int NodesPerBlock = 1>
 __global__ void kmeans_find_centers_kernel(DetailedPlaceDBType db, IndependentSetMatchingStateType state, KMeansState<typename DetailedPlaceDBType::type> kmeans_state)
 {
 #ifdef DEBUG
     assert(ThreadsPerBlock == blockDim.x);
 #endif
-    assert(blockIdx.x < state.num_selected);
-    int node_id = state.selected_maximal_independent_set[blockIdx.x];
-    assert(node_id < db.num_movable_nodes);
-    auto node_x = db.x[node_id]; 
-    auto node_y = db.y[node_id];
-
     typedef cub::BlockReduce<ItemWithIndex<typename DetailedPlaceDBType::type>, ThreadsPerBlock> BlockReduce; 
 
     __shared__ typename BlockReduce::TempStorage temp_storage; 
 
-    ItemWithIndex<typename DetailedPlaceDBType::type> thread_data; 
+    int node_indices[NodesPerBlock];
+    typename DetailedPlaceDBType::type node_x[NodesPerBlock];
+    typename DetailedPlaceDBType::type node_y[NodesPerBlock];
+    bool valid_node[NodesPerBlock];
+    ItemWithIndex<typename DetailedPlaceDBType::type>
+        thread_data[NodesPerBlock];
 
-    thread_data.value = DREAMPLACE_CUDA_NAMESPACE::numeric_limits<typename DetailedPlaceDBType::type>::max(); 
-    thread_data.index = DREAMPLACE_CUDA_NAMESPACE::numeric_limits<int>::max(); 
+    #pragma unroll
+    for (int n = 0; n < NodesPerBlock; ++n)
+    {
+        node_indices[n] = blockIdx.x*NodesPerBlock + n;
+        valid_node[n] = node_indices[n] < state.num_selected;
+        if (valid_node[n])
+        {
+            int node_id =
+                state.selected_maximal_independent_set[node_indices[n]];
+            assert(node_id < db.num_movable_nodes);
+            node_x[n] = db.x[node_id];
+            node_y[n] = db.y[node_id];
+        }
+        thread_data[n].value =
+            DREAMPLACE_CUDA_NAMESPACE::numeric_limits<
+                typename DetailedPlaceDBType::type>::max();
+        thread_data[n].index =
+            DREAMPLACE_CUDA_NAMESPACE::numeric_limits<int>::max();
+    }
     for (int center_id = threadIdx.x; center_id < kmeans_state.num_seeds; center_id += ThreadsPerBlock)
     {
         assert(center_id < kmeans_state.num_seeds);
@@ -130,25 +150,53 @@ __global__ void kmeans_find_centers_kernel(DetailedPlaceDBType db, IndependentSe
         typename DetailedPlaceDBType::type center_y = kmeans_state.centers_y[center_id] / KMeansState<typename DetailedPlaceDBType::type>::scale; 
         typename DetailedPlaceDBType::type weight = kmeans_state.weights[center_id];
 
-        typename DetailedPlaceDBType::type distance = kmeans_distance(node_x, node_y, center_x, center_y)*weight; 
-        if (distance < thread_data.value)
+        #pragma unroll
+        for (int n = 0; n < NodesPerBlock; ++n)
         {
-            thread_data.value = distance; 
-            thread_data.index = center_id; 
+            if (valid_node[n])
+            {
+                typename DetailedPlaceDBType::type distance =
+                    kmeans_distance(
+                        node_x[n], node_y[n], center_x, center_y)*weight;
+                if (distance < thread_data[n].value)
+                {
+                    thread_data[n].value = distance;
+                    thread_data[n].index = center_id;
+                }
+            }
         }
     }
     if (threadIdx.x < kmeans_state.num_seeds) 
     {
-        assert(thread_data.index < kmeans_state.num_seeds);
+        #pragma unroll
+        for (int n = 0; n < NodesPerBlock; ++n)
+        {
+            if (valid_node[n])
+            {
+                assert(thread_data[n].index < kmeans_state.num_seeds);
+            }
+        }
     }
 
-    // Compute the block-wide minimum for thread0
-    ItemWithIndex<typename DetailedPlaceDBType::type> aggregate = BlockReduce(temp_storage).Reduce(thread_data, ReduceMinOP<typename DetailedPlaceDBType::type>(), kmeans_state.num_seeds);
-
-    if (threadIdx.x == 0)
+    #pragma unroll
+    for (int n = 0; n < NodesPerBlock; ++n)
     {
-        assert(blockIdx.x < state.num_selected);
-        kmeans_state.node2centers_map[blockIdx.x] = aggregate.index; 
+        if (valid_node[n])
+        {
+            // Compute the block-wide minimum for thread0.
+            ItemWithIndex<typename DetailedPlaceDBType::type> aggregate =
+                BlockReduce(temp_storage).Reduce(
+                    thread_data[n],
+                    ReduceMinOP<typename DetailedPlaceDBType::type>(),
+                    kmeans_state.num_seeds);
+
+            if (threadIdx.x == 0)
+            {
+                kmeans_state.node2centers_map[node_indices[n]] =
+                    aggregate.index;
+            }
+        }
+        __syncthreads();
     }
 }
 
@@ -394,7 +442,12 @@ void partition_kmeans(const DetailedPlaceDBType& db, IndependentSetMatchingState
         dreamplacePrint(kNONE, "\n");
 #endif
         // for each node, find centers 
-        kmeans_find_centers_kernel<DetailedPlaceDBType, IndependentSetMatchingStateType, 256><<<state.num_selected, 256>>>(db, state, kmeans_state); 
+        constexpr int nodes_per_block = 8;
+        kmeans_find_centers_kernel<
+            DetailedPlaceDBType, IndependentSetMatchingStateType,
+            256, nodes_per_block>
+            <<<ceilDiv(state.num_selected, nodes_per_block), 256>>>(
+                db, state, kmeans_state);
         // for each center, adjust itself 
         kmeans_update_centers(db, state, kmeans_state);
         // for each partition, update weight 
