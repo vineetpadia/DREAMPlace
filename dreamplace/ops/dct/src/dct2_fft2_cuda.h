@@ -38,7 +38,8 @@ void idct2_fft2PreprocessCudaLauncher(const T *x, T *y, const int M,
 
 template <typename T>
 void idct2_fft2PostprocessCudaLauncher(const T *x, T *y, const int M,
-                                       const int N);
+                                       const int N,
+                                       const T normalization_scale);
 
 // idct_idxst
 void idct_idxst_forward(at::Tensor x, at::Tensor expkM, at::Tensor expkN,
@@ -54,7 +55,8 @@ void idct_idxstPreprocessCudaLauncher(
 
 template <typename T>
 void idct_idxstPostprocessCudaLauncher(const T *x, T *y, const int M,
-                                       const int N);
+                                       const int N,
+                                       const T normalization_scale);
 
 // idxst_idct
 void idxst_idct_forward(at::Tensor x, at::Tensor expkM, at::Tensor expkN,
@@ -70,7 +72,8 @@ void idxst_idctPreprocessCudaLauncher(
 
 template <typename T>
 void idxst_idctPostprocessCudaLauncher(const T *x, T *y, const int M,
-                                       const int N);
+                                       const int N,
+                                       const T normalization_scale);
 
 DREAMPLACE_END_NAMESPACE
 

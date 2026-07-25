@@ -76,11 +76,23 @@ void idct2_fft2_forward(at::Tensor x, at::Tensor expkM, at::Tensor expkN,
         DREAMPLACE_TENSOR_DATA_PTR(expkM, scalar_t),
         DREAMPLACE_TENSOR_DATA_PTR(expkN, scalar_t));
 
+#if TORCH_VERSION_MAJOR > 1 || \
+    (TORCH_VERSION_MAJOR == 1 && TORCH_VERSION_MINOR >= 8)
+    // Skip the standalone inverse-normalization kernel.  The postprocess
+    // applies the same rounded scale before its existing output scale.
+    auto y = at::fft_irfft2(at::view_as_complex(buf), {{M, N}}, {-2, -1},
+                            "forward");
+    const scalar_t normalization_scale =
+        scalar_t(1) / static_cast<scalar_t>(M * N);
+#else
     auto y = at::irfft(buf, 2, false, true, {{M, N}});
+    const scalar_t normalization_scale = scalar_t(1);
+#endif
 
     idct2_fft2PostprocessCudaLauncher<scalar_t>(
         DREAMPLACE_TENSOR_DATA_PTR(y, scalar_t),
-        DREAMPLACE_TENSOR_DATA_PTR(out, scalar_t), M, N);
+        DREAMPLACE_TENSOR_DATA_PTR(out, scalar_t), M, N,
+        normalization_scale);
   });
 }
 
@@ -118,11 +130,21 @@ void idct_idxst_forward_impl(at::Tensor x, at::Tensor weight,
         DREAMPLACE_TENSOR_DATA_PTR(expkM, scalar_t),
         DREAMPLACE_TENSOR_DATA_PTR(expkN, scalar_t));
 
+#if TORCH_VERSION_MAJOR > 1 || \
+    (TORCH_VERSION_MAJOR == 1 && TORCH_VERSION_MINOR >= 8)
+    auto y = at::fft_irfft2(at::view_as_complex(buf), {{M, N}}, {-2, -1},
+                            "forward");
+    const scalar_t normalization_scale =
+        scalar_t(1) / static_cast<scalar_t>(M * N);
+#else
     auto y = at::irfft(buf, 2, false, true, {{M, N}});
+    const scalar_t normalization_scale = scalar_t(1);
+#endif
 
     idct_idxstPostprocessCudaLauncher<scalar_t>(
         DREAMPLACE_TENSOR_DATA_PTR(y, scalar_t),
-        DREAMPLACE_TENSOR_DATA_PTR(out, scalar_t), M, N);
+        DREAMPLACE_TENSOR_DATA_PTR(out, scalar_t), M, N,
+        normalization_scale);
   });
 }
 
@@ -171,11 +193,21 @@ void idxst_idct_forward_impl(at::Tensor x, at::Tensor weight,
         DREAMPLACE_TENSOR_DATA_PTR(expkM, scalar_t),
         DREAMPLACE_TENSOR_DATA_PTR(expkN, scalar_t));
 
+#if TORCH_VERSION_MAJOR > 1 || \
+    (TORCH_VERSION_MAJOR == 1 && TORCH_VERSION_MINOR >= 8)
+    auto y = at::fft_irfft2(at::view_as_complex(buf), {{M, N}}, {-2, -1},
+                            "forward");
+    const scalar_t normalization_scale =
+        scalar_t(1) / static_cast<scalar_t>(M * N);
+#else
     auto y = at::irfft(buf, 2, false, true, {{M, N}});
+    const scalar_t normalization_scale = scalar_t(1);
+#endif
 
     idxst_idctPostprocessCudaLauncher<scalar_t>(
         DREAMPLACE_TENSOR_DATA_PTR(y, scalar_t),
-        DREAMPLACE_TENSOR_DATA_PTR(out, scalar_t), M, N);
+        DREAMPLACE_TENSOR_DATA_PTR(out, scalar_t), M, N,
+        normalization_scale);
   });
 }
 

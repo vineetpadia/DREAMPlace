@@ -269,8 +269,18 @@ void idct2_fft2PreprocessCudaLauncher(
     idct2_fft2Preprocess<T, ComplexType<T>><<<gridSize, blockSize>>>(x, (ComplexType<T> *)y, M, N, M / 2, N / 2, (ComplexType<T> *)expkM, (ComplexType<T> *)expkN);
 }
 
+__device__ __forceinline__ float dctMultiplyRound(float lhs, float rhs)
+{
+    return __fmul_rn(lhs, rhs);
+}
+
+__device__ __forceinline__ double dctMultiplyRound(double lhs, double rhs)
+{
+    return __dmul_rn(lhs, rhs);
+}
+
 template <typename T>
-__global__ void idct2_fft2Postprocess(const T *x, T *y, const int M, const int N, const int halfN, const int MN)
+__global__ void idct2_fft2Postprocess(const T *x, T *y, const int M, const int N, const int halfN, const int MN, const T normalization_scale)
 {
     const int wid = blockDim.x * blockIdx.x + threadIdx.x;
     const int hid = blockDim.y * blockIdx.y + threadIdx.y;
@@ -296,26 +306,21 @@ __global__ void idct2_fft2Postprocess(const T *x, T *y, const int M, const int N
             assert(0);
             break;
         }
-        y[index] = x[INDEX(hid, wid, N)] * MN;
+        T value = dctMultiplyRound(
+            x[INDEX(hid, wid, N)], normalization_scale);
+        y[index] = dctMultiplyRound(value, static_cast<T>(MN));
     }
 }
 
 template <typename T>
-void idct2_fft2PostprocessCudaLauncher(const T *x, T *y, const int M, const int N)
+void idct2_fft2PostprocessCudaLauncher(
+    const T *x, T *y, const int M, const int N,
+    const T normalization_scale)
 {
     dim3 gridSize((N + TPB - 1) / TPB, (M + TPB - 1) / TPB, 1);
     dim3 blockSize(TPB, TPB, 1);
-    idct2_fft2Postprocess<T><<<gridSize, blockSize>>>(x, y, M, N, N / 2, M * N);
-}
-
-__device__ __forceinline__ float dctMultiplyRound(float lhs, float rhs)
-{
-    return __fmul_rn(lhs, rhs);
-}
-
-__device__ __forceinline__ double dctMultiplyRound(double lhs, double rhs)
-{
-    return __dmul_rn(lhs, rhs);
+    idct2_fft2Postprocess<T><<<gridSize, blockSize>>>(
+        x, y, M, N, N / 2, M * N, normalization_scale);
 }
 
 template <typename T>
@@ -454,31 +459,33 @@ void idct_idxstPreprocessCudaLauncher(
 // else
 //     new_output[hid][wid] = output[hid][wid];
 template <typename T>
-__global__ void idct_idxstPostprocess(const T *x, T *y, const int M, const int N, const int halfN, const int MN)
+__global__ void idct_idxstPostprocess(const T *x, T *y, const int M, const int N, const int halfN, const int MN, const T normalization_scale)
 {
     const int wid = blockDim.x * blockIdx.x + threadIdx.x;
     const int hid = blockDim.y * blockIdx.y + threadIdx.y;
     if (hid < M && wid < N)
     {
+        T value = dctMultiplyRound(
+            x[INDEX(hid, wid, N)], normalization_scale);
         int cond = ((hid < M / 2) << 1) | (wid < N / 2);
         int index;
         switch (cond)
         {
         case 0:
             index = INDEX(((M - hid) << 1) - 1, ((N - wid) << 1) - 1, N);
-            y[index] = -x[INDEX(hid, wid, N)] * MN;
+            y[index] = -dctMultiplyRound(value, static_cast<T>(MN));
             break;
         case 1:
             index = INDEX(((M - hid) << 1) - 1, wid << 1, N);
-            y[index] = x[INDEX(hid, wid, N)] * MN;
+            y[index] = dctMultiplyRound(value, static_cast<T>(MN));
             break;
         case 2:
             index = INDEX(hid << 1, ((N - wid) << 1) - 1, N);
-            y[index] = -x[INDEX(hid, wid, N)] * MN;
+            y[index] = -dctMultiplyRound(value, static_cast<T>(MN));
             break;
         case 3:
             index = INDEX(hid << 1, wid << 1, N);
-            y[index] = x[INDEX(hid, wid, N)] * MN;
+            y[index] = dctMultiplyRound(value, static_cast<T>(MN));
             break;
         default:
             assert(0);
@@ -488,11 +495,14 @@ __global__ void idct_idxstPostprocess(const T *x, T *y, const int M, const int N
 }
 
 template <typename T>
-void idct_idxstPostprocessCudaLauncher(const T *x, T *y, const int M, const int N)
+void idct_idxstPostprocessCudaLauncher(
+    const T *x, T *y, const int M, const int N,
+    const T normalization_scale)
 {
     dim3 gridSize((N + TPB - 1) / TPB, (M + TPB - 1) / TPB, 1);
     dim3 blockSize(TPB, TPB, 1);
-    idct_idxstPostprocess<T><<<gridSize, blockSize>>>(x, y, M, N, N / 2, M * N);
+    idct_idxstPostprocess<T><<<gridSize, blockSize>>>(
+        x, y, M, N, N / 2, M * N, normalization_scale);
 }
 
 // idxst_idct
@@ -633,31 +643,33 @@ void idxst_idctPreprocessCudaLauncher(
 // else
 //     new_output[hid][wid] = output[hid][wid];
 template <typename T>
-__global__ void idxst_idctPostprocess(const T *x, T *y, const int M, const int N, const int halfN, const int MN)
+__global__ void idxst_idctPostprocess(const T *x, T *y, const int M, const int N, const int halfN, const int MN, const T normalization_scale)
 {
     const int wid = blockDim.x * blockIdx.x + threadIdx.x;
     const int hid = blockDim.y * blockIdx.y + threadIdx.y;
     if (hid < M && wid < N)
     {
+        T value = dctMultiplyRound(
+            x[INDEX(hid, wid, N)], normalization_scale);
         int cond = ((hid < M / 2) << 1) | (wid < N / 2);
         int index;
         switch (cond)
         {
         case 0:
             index = INDEX(((M - hid) << 1) - 1, ((N - wid) << 1) - 1, N);
-            y[index] = -x[INDEX(hid, wid, N)] * MN;
+            y[index] = -dctMultiplyRound(value, static_cast<T>(MN));
             break;
         case 1:
             index = INDEX(((M - hid) << 1) - 1, wid << 1, N);
-            y[index] = -x[INDEX(hid, wid, N)] * MN;
+            y[index] = -dctMultiplyRound(value, static_cast<T>(MN));
             break;
         case 2:
             index = INDEX(hid << 1, ((N - wid) << 1) - 1, N);
-            y[index] = x[INDEX(hid, wid, N)] * MN;
+            y[index] = dctMultiplyRound(value, static_cast<T>(MN));
             break;
         case 3:
             index = INDEX(hid << 1, wid << 1, N);
-            y[index] = x[INDEX(hid, wid, N)] * MN;
+            y[index] = dctMultiplyRound(value, static_cast<T>(MN));
             break;
         default:
             assert(0);
@@ -667,11 +679,14 @@ __global__ void idxst_idctPostprocess(const T *x, T *y, const int M, const int N
 }
 
 template <typename T>
-void idxst_idctPostprocessCudaLauncher(const T *x, T *y, const int M, const int N)
+void idxst_idctPostprocessCudaLauncher(
+    const T *x, T *y, const int M, const int N,
+    const T normalization_scale)
 {
     dim3 gridSize((N + TPB - 1) / TPB, (M + TPB - 1) / TPB, 1);
     dim3 blockSize(TPB, TPB, 1);
-    idxst_idctPostprocess<T><<<gridSize, blockSize>>>(x, y, M, N, N / 2, M * N);
+    idxst_idctPostprocess<T><<<gridSize, blockSize>>>(
+        x, y, M, N, N / 2, M * N, normalization_scale);
 }
 
 // dct2_fft2
@@ -716,7 +731,8 @@ REGISTER_IDCT_IDXSTPREPROCESS_KERNEL_LAUNCHER(double);
         const type *x,                                       \
         type *y,                                             \
         const int M,                                         \
-        const int N);
+        const int N,                                         \
+        const type normalization_scale);
 
 REGISTER_IDCT_IDXSTPOSTPROCESS_KERNEL_LAUNCHER(float);
 REGISTER_IDCT_IDXSTPOSTPROCESS_KERNEL_LAUNCHER(double);
@@ -740,7 +756,8 @@ REGISTER_IDXST_IDCTPREPROCESS_KERNEL_LAUNCHER(double);
         const type *x,                                       \
         type *y,                                             \
         const int M,                                         \
-        const int N);
+        const int N,                                         \
+        const type normalization_scale);
 
 REGISTER_IDXST_IDCTPOSTPROCESS_KERNEL_LAUNCHER(float);
 REGISTER_IDXST_IDCTPOSTPROCESS_KERNEL_LAUNCHER(double);
@@ -763,7 +780,8 @@ REGISTER_IDCT2_FFT2PREPROCESS_KERNEL_LAUNCHER(double);
         const type *x,                                       \
         type *y,                                             \
         const int M,                                         \
-        const int N);
+        const int N,                                         \
+        const type normalization_scale);
 
 REGISTER_IDCT2_FFT2POSTPROCESS_KERNEL_LAUNCHER(float);
 REGISTER_IDCT2_FFT2POSTPROCESS_KERNEL_LAUNCHER(double);
