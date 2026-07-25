@@ -971,7 +971,9 @@ void k_reorder(
             <<<group_size, 32>>>(state.costs, state.best_permute_id, group_size,
                                  state.num_permutations);
         // print_best_permute_id<<<1, 1>>>(state, group_id, offset);
-        apply_reorder<<<ceilDiv(group_size, 256), 256>>>(
+        constexpr int apply_reorder_threads = 32;
+        apply_reorder<<<ceilDiv(group_size, apply_reorder_threads),
+                        apply_reorder_threads>>>(
             db, state, group_id, group_size, offset);
 #ifdef K_REORDER_PROFILE
         checkCUDA(cudaDeviceSynchronize());
