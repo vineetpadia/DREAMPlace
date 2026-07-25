@@ -269,8 +269,13 @@ class NonLinearPlace(BasicPlace.BasicPlace):
                         logging.info("add %g%% noise" % (params.gp_noise_ratio * 100))
                         model.op_collections.noise_op(model.data_collections.pos[0], params.gp_noise_ratio)
                     initialize_learning_rate(model.data_collections.pos[0])
-                # the state must be saved after setting learning rate
-                initial_state = copy.deepcopy(optimizer.state_dict())
+                # Routability adjustment may restart this stage; capture its
+                # optimizer state only when that restart path is enabled.
+                initial_state = (
+                    copy.deepcopy(optimizer.state_dict())
+                    if params.routability_opt_flag
+                    else None
+                )
 
                 if params.gpu:
                     torch.cuda.synchronize()

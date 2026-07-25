@@ -73,6 +73,21 @@ class NesterovAcceleratedGradientOptimizer(Optimizer):
     def __setstate__(self, state):
         super(NesterovAcceleratedGradientOptimizer, self).__setstate__(state)
 
+    def add_param_group(self, param_group):
+        # DREAMPlace runs this optimizer eagerly. Bypass PyTorch's lazy
+        # torch._dynamo-disabling wrapper, which otherwise imports the entire
+        # compiler stack during construction.
+        add_param_group = getattr(
+            Optimizer.add_param_group, "__wrapped__", Optimizer.add_param_group
+        )
+        return add_param_group(self, param_group)
+
+    def zero_grad(self, set_to_none=True):
+        # Keep the base implementation and semantics without paying the same
+        # lazy compiler import on the first optimization step.
+        zero_grad = getattr(Optimizer.zero_grad, "__wrapped__", Optimizer.zero_grad)
+        return zero_grad(self, set_to_none=set_to_none)
+
     def step(self, closure=None):
         if self.use_bb:
             self.step_bb(closure)
