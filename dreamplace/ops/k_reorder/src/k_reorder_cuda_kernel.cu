@@ -937,7 +937,10 @@ void k_reorder(
         compute_instance_nets<<<ceilDiv(db.num_nets, 256), 256>>>(db, state);
 #endif
         // print_instance_nets<<<1, 1>>>(state, group_id);
-        unique_instance_nets<<<ceilDiv(group_size * 32, 256), 256>>>(
+        constexpr int unique_net_threads = 64;
+        unique_instance_nets<<<
+            ceilDiv(group_size * 32, unique_net_threads),
+            unique_net_threads>>>(
             db, state, group_id, group_size);
         // print_instance_nets<<<1, 1>>>(state, group_id, offset);
         // check_instance_nets<<<1, 1>>>(db, state, group_id);
