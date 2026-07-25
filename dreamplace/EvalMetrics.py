@@ -92,7 +92,9 @@ class EvalMetrics (object):
             content += ", Global Overflow %.6E" % (self.goverflow)
         if self.max_density is not None:
             if self.max_density.numel() == 1:
-                content += ", MaxDensity %.3E" % (self.max_density)
+                content += ", MaxDensity %.3E" % self.get_scalar(
+                    "max_density", -1
+                )
             else:
                 content += ", MaxDensity [%s]" % ", ".join(["%.3E" % i for i in self.max_density])
         if self.route_utilization is not None:

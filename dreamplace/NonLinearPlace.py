@@ -299,25 +299,52 @@ class NonLinearPlace(BasicPlace.BasicPlace):
                             # if(stop_mask is not None):
                             #     stop_mask.copy_(cur_metric.overflow < params.stop_overflow)
 
-                            if Lgamma_step > 100 and (
-                                ### for fence region, the outer cell overflow decides the stopping of GP
-                                (
-                                    cur_metric.overflow[-1] < params.stop_overflow
-                                    and cur_metric.hpwl > prev_metric.hpwl
+                            if Lgamma_step > 100:
+                                cur_overflow = cur_metric.get_cached_scalar(
+                                    "overflow", -1
                                 )
-                                or cur_metric.max_density[-1] < params.target_density
-                            ):
-                                logging.debug(
-                                    "Lgamma stopping criteria: %d > 100 and (( %g < 0.1 and %g > %g ) or %g < 1.0)"
-                                    % (
-                                        Lgamma_step,
-                                        cur_metric.overflow[-1],
-                                        cur_metric.hpwl,
-                                        prev_metric.hpwl,
-                                        cur_metric.max_density[-1],
+                                cur_hpwl = cur_metric.get_cached_scalar("hpwl")
+                                prev_hpwl = prev_metric.get_cached_scalar("hpwl")
+                                cur_max_density = cur_metric.get_cached_scalar(
+                                    "max_density", -1
+                                )
+                                use_cached_metrics = (
+                                    len(placedb.regions) == 0
+                                    and cur_overflow is not None
+                                    and cur_hpwl is not None
+                                    and prev_hpwl is not None
+                                    and cur_max_density is not None
+                                )
+                                if use_cached_metrics:
+                                    stop_condition = (
+                                        (
+                                            cur_overflow < params.stop_overflow
+                                            and cur_hpwl > prev_hpwl
+                                        )
+                                        or cur_max_density < params.target_density
                                     )
-                                )
-                                return True
+                                else:
+                                    stop_condition = (
+                                        ### for fence region, the outer cell overflow decides the stopping of GP
+                                        (
+                                            cur_metric.overflow[-1] < params.stop_overflow
+                                            and cur_metric.hpwl > prev_metric.hpwl
+                                        )
+                                        or cur_metric.max_density[-1] < params.target_density
+                                    )
+
+                                if stop_condition:
+                                    logging.debug(
+                                        "Lgamma stopping criteria: %d > 100 and (( %g < 0.1 and %g > %g ) or %g < 1.0)"
+                                        % (
+                                            Lgamma_step,
+                                            cur_metric.overflow[-1],
+                                            cur_metric.hpwl,
+                                            prev_metric.hpwl,
+                                            cur_metric.max_density[-1],
+                                        )
+                                    )
+                                    return True
                             if len(placedb.regions) > 0 and model.update_mask.sum() == 0:
                                 logging.debug("All regions stop updating, finish global placement")
                                 return True
@@ -325,11 +352,33 @@ class NonLinearPlace(BasicPlace.BasicPlace):
                         if len(metrics) > 50:
                             cur_metric = metrics[-1][-1][-1]
                             prev_metric = metrics[-50][-1][-1]
+                            cur_overflow = cur_metric.get_cached_scalar(
+                                "overflow", -1
+                            )
+                            prev_overflow = prev_metric.get_cached_scalar(
+                                "overflow", -1
+                            )
+                            cur_hpwl = cur_metric.get_cached_scalar("hpwl")
                             # record HPWL and overflow increase, and check divergence
                             if (
-                                cur_metric.overflow[-1] > prev_metric.overflow[-1]
-                                and cur_metric.hpwl > best_metric[0].hpwl * 2
+                                len(placedb.regions) == 0
+                                and cur_overflow is not None
+                                and prev_overflow is not None
+                                and cur_hpwl is not None
+                                and best_hpwl[0] is not None
                             ):
+                                divergence_condition = (
+                                    cur_overflow > prev_overflow
+                                    and cur_hpwl > best_hpwl[0] * 2
+                                )
+                            else:
+                                divergence_condition = (
+                                    cur_metric.overflow[-1]
+                                    > prev_metric.overflow[-1]
+                                    and cur_metric.hpwl
+                                    > best_metric[0].hpwl * 2
+                                )
+                            if divergence_condition:
                                 return True
                         return False
 
