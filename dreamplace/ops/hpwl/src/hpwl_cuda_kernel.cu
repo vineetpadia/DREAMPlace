@@ -12,6 +12,7 @@ __global__ void computeHPWL(
         const T* y,
         const int* flat_netpin,
         const int* netpin_start,
+        const T* net_weights,
         const unsigned char* net_mask,
         int num_nets,
         T* partial_hpwl
@@ -35,13 +36,29 @@ __global__ void computeHPWL(
                 min_y = min(min_y, y[pin_id]);
                 max_y = max(max_y, y[pin_id]);
             }
-            partial_hpwl[i] = max_x - min_x;
-            partial_hpwl[num_nets + i] = max_y - min_y;
+            T hpwl_x = max_x - min_x;
+            T hpwl_y = max_y - min_y;
+            if (net_weights)
+            {
+                T weight = net_weights[i];
+                hpwl_x *= weight;
+                hpwl_y *= weight;
+            }
+            partial_hpwl[i] = hpwl_x;
+            partial_hpwl[num_nets + i] = hpwl_y;
         }
         else
         {
-            partial_hpwl[i] = 0;
-            partial_hpwl[num_nets + i] = 0;
+            T hpwl_x = 0;
+            T hpwl_y = 0;
+            if (net_weights)
+            {
+                T weight = net_weights[i];
+                hpwl_x *= weight;
+                hpwl_y *= weight;
+            }
+            partial_hpwl[i] = hpwl_x;
+            partial_hpwl[num_nets + i] = hpwl_y;
         }
     }
 }
@@ -51,6 +68,7 @@ int computeHPWLCudaLauncher(
         const T* x, const T* y,
         const int* flat_netpin,
         const int* netpin_start,
+        const T* net_weights,
         const unsigned char* net_mask,
         int num_nets,
         T* partial_hpwl
@@ -64,6 +82,7 @@ int computeHPWLCudaLauncher(
             y,
             flat_netpin,
             netpin_start,
+            net_weights,
             net_mask,
             num_nets,
             partial_hpwl
@@ -84,6 +103,7 @@ int computeHPWLCudaLauncher(
         const type* x, const type* y, \
         const int* flat_netpin, \
         const int* netpin_start, \
+        const type* net_weights, \
         const unsigned char* net_mask, \
         int num_nets, \
         type* partial_hpwl \

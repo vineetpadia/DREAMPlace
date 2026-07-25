@@ -12,6 +12,7 @@ DREAMPLACE_BEGIN_NAMESPACE
 template <typename T>
 int computeHPWLCudaLauncher(const T* x, const T* y, const int* flat_netpin,
                             const int* netpin_start,
+                            const T* net_weights,
                             const unsigned char* net_mask, int num_nets,
                             T* partial_wl);
 
@@ -50,14 +51,14 @@ at::Tensor hpwl_forward(at::Tensor pos, at::Tensor flat_netpin,
             DREAMPLACE_TENSOR_DATA_PTR(pos, scalar_t) + pos.numel() / 2,
             DREAMPLACE_TENSOR_DATA_PTR(flat_netpin, int),
             DREAMPLACE_TENSOR_DATA_PTR(netpin_start, int),
+            net_weights.numel()
+                ? DREAMPLACE_TENSOR_DATA_PTR(net_weights, scalar_t)
+                : nullptr,
             DREAMPLACE_TENSOR_DATA_PTR(net_mask, unsigned char), num_nets,
             DREAMPLACE_TENSOR_DATA_PTR(partial_wl, scalar_t));
       });
   // std::cout << "partial_hpwl = \n" << partial_wl << "\n";
 
-  if (net_weights.numel()) {
-    partial_wl.mul_(net_weights.view({1, num_nets}));
-  }
   return partial_wl.sum();
 }
 
