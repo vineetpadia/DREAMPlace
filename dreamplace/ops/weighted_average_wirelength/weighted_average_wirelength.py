@@ -171,7 +171,7 @@ class WeightedAverageWirelengthMergedFunction(Function):
     """
     @staticmethod
     def forward(ctx, pos, flat_netpin, netpin_start, pin2net_map, net_weights,
-                net_mask, pin_mask, inv_gamma):
+                net_mask, pin_mask, inv_gamma, zero_wirelength):
         """
         @param pos pin location (x array, y array), not cell location
         @param pin2net_map pin2net map
@@ -185,8 +185,13 @@ class WeightedAverageWirelengthMergedFunction(Function):
             func = weighted_average_wirelength_cuda_merged.forward
         else:
             func = weighted_average_wirelength_cpp_merged.forward
-        output = func(pos.view(pos.numel()), flat_netpin, netpin_start,
-                      pin2net_map, net_weights, net_mask, inv_gamma)
+        if pos.is_cuda:
+            output = func(pos.view(pos.numel()), flat_netpin, netpin_start,
+                          pin2net_map, net_weights, net_mask, inv_gamma,
+                          zero_wirelength)
+        else:
+            output = func(pos.view(pos.numel()), flat_netpin, netpin_start,
+                          pin2net_map, net_weights, net_mask, inv_gamma)
         ctx.pin2net_map = pin2net_map
         ctx.flat_netpin = flat_netpin
         ctx.netpin_start = netpin_start
@@ -228,7 +233,7 @@ class WeightedAverageWirelengthMergedFunction(Function):
                 torch.cuda.synchronize()
             logger.debug("wirelength backward %.3f ms" %
                          ((time.time() - tt) * 1000))
-        return output, None, None, None, None, None, None, None
+        return output, None, None, None, None, None, None, None, None
 
 
 class WeightedAverageWirelength(nn.Module):
@@ -246,7 +251,8 @@ class WeightedAverageWirelength(nn.Module):
                  net_mask=None,
                  pin_mask=None,
                  gamma=None,
-                 algorithm='atomic'):
+                 algorithm='atomic',
+                 fast_mode=False):
         """
         @brief initialization
         @param flat_netpin flat netpin map, length of #pins
@@ -257,6 +263,8 @@ class WeightedAverageWirelength(nn.Module):
         @param pin_mask whether compute gradient for a pin, 1 means to fill with zero, 0 means to compute
         @param gamma the smaller, the closer to HPWL
         @param algorithm must be net-by-net | atomic | merged
+        @param fast_mode skip the merged CUDA scalar cost while preserving its
+        gradient
         """
         super(WeightedAverageWirelength, self).__init__()
         assert net_weights is not None \
@@ -278,6 +286,9 @@ class WeightedAverageWirelength(nn.Module):
         self.pin_mask = pin_mask
         self.gamma = gamma
         self.algorithm = algorithm
+        self.zero_wirelength = (
+            gamma.new_zeros(1) if fast_mode else gamma.new_empty(0)
+        )
 
     def forward(self, pos):
         if self.algorithm == 'net-by-net':
@@ -311,5 +322,6 @@ class WeightedAverageWirelength(nn.Module):
                 self.net_weights,
                 self.net_mask,
                 self.pin_mask,
-                1.0 / self.gamma  # do not store inv_gamma as gamma is changing
+                1.0 / self.gamma,  # do not store inv_gamma as gamma is changing
+                self.zero_wirelength
             )

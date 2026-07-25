@@ -63,7 +63,7 @@ void scaleIntegrateNetWeightsAndMaskCudaLauncher(
 std::vector<at::Tensor> weighted_average_wirelength_forward(
     at::Tensor pos, at::Tensor flat_netpin, at::Tensor netpin_start,
     at::Tensor pin2net_map, at::Tensor net_weights, at::Tensor net_mask,
-    at::Tensor inv_gamma) {
+    at::Tensor inv_gamma, at::Tensor zero_wirelength) {
   CHECK_FLAT_CUDA(pos);
   CHECK_EVEN(pos);
   CHECK_CONTIGUOUS(pos);
@@ -77,12 +77,23 @@ std::vector<at::Tensor> weighted_average_wirelength_forward(
   CHECK_CONTIGUOUS(net_mask);
   CHECK_FLAT_CUDA(pin2net_map);
   CHECK_CONTIGUOUS(pin2net_map);
+  CHECK_FLAT_CUDA(zero_wirelength);
+  CHECK_CONTIGUOUS(zero_wirelength);
+  AT_ASSERTM(
+      zero_wirelength.numel() <= 1,
+      "zero_wirelength must be empty or contain one element");
+  AT_ASSERTM(
+      zero_wirelength.scalar_type() == pos.scalar_type() &&
+          zero_wirelength.get_device() == pos.get_device(),
+      "zero_wirelength must match the position dtype and CUDA device");
 
   int num_nets = netpin_start.numel() - 1;
   int num_pins = pos.numel() / 2;
+  bool compute_wirelength = zero_wirelength.numel() == 0;
 
   // x, y interleave
-  at::Tensor partial_wl = at::empty({num_nets, 2}, pos.options());
+  at::Tensor partial_wl =
+      compute_wirelength ? at::empty({num_nets, 2}, pos.options()) : at::Tensor();
   at::Tensor grad_intermediate = at::empty_like(pos);
 
   DREAMPLACE_DISPATCH_FLOATING_TYPES(
@@ -96,12 +107,14 @@ std::vector<at::Tensor> weighted_average_wirelength_forward(
             DREAMPLACE_TENSOR_DATA_PTR(inv_gamma, scalar_t),
             DREAMPLACE_TENSOR_DATA_PTR(net_weights, scalar_t),
             net_weights.numel() != 0,
-            DREAMPLACE_TENSOR_DATA_PTR(partial_wl, scalar_t),
+            compute_wirelength
+                ? DREAMPLACE_TENSOR_DATA_PTR(partial_wl, scalar_t)
+                : nullptr,
             DREAMPLACE_TENSOR_DATA_PTR(grad_intermediate, scalar_t),
             DREAMPLACE_TENSOR_DATA_PTR(grad_intermediate, scalar_t) + num_pins);
       });
 
-  auto wl = partial_wl.sum();
+  auto wl = compute_wirelength ? partial_wl.sum() : zero_wirelength;
   return {wl, grad_intermediate};
 }
 

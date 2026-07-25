@@ -497,7 +497,8 @@ class PlaceObj(nn.Module):
             net_mask=data_collections.net_mask_ignore_large_degrees,
             pin_mask=data_collections.pin_mask_ignore_fixed_macros,
             gamma=self.gamma,
-            algorithm='merged')
+            algorithm='merged',
+            fast_mode=self.skip_wirelength_energy(placedb))
 
         # wirelength for position
         def build_wirelength_op(pos):
@@ -819,6 +820,24 @@ class PlaceObj(nn.Module):
             return False
         optimizer = str(self.global_place_params.get("optimizer", "")).lower()
         return optimizer == "nesterov"
+
+    def skip_wirelength_energy(self, placedb):
+        """Return whether only the smooth-wirelength gradient is consumed.
+
+        Nesterov does not use objective values for its line search. With one
+        inner iteration, the objective-based inner stopping criterion cannot
+        compare two samples either. Metrics and outer stopping use HPWL and
+        density overflow, so the smooth-wirelength scalar reduction is unused.
+        """
+        if len(placedb.regions) > 0:
+            return False
+        optimizer = str(
+            self.global_place_params.get("optimizer", "")
+        ).lower()
+        return (
+            optimizer == "nesterov"
+            and self.global_place_params.get("Lsub_iteration", 1) == 1
+        )
 
     def initialize_density_weight(self, params, placedb):
         """

@@ -69,13 +69,16 @@ __global__ void computeWeightedAverageWirelength(
             exp_nx_sum += exp_nx;
         }
 
-        T wirelength =
-            xexp_x_sum / exp_x_sum - xexp_nx_sum / exp_nx_sum;
-        if (has_net_weights)
+        if (partial_wl)
         {
-            wirelength *= net_weights[ii];
+            T wirelength =
+                xexp_x_sum / exp_x_sum - xexp_nx_sum / exp_nx_sum;
+            if (has_net_weights)
+            {
+                wirelength *= net_weights[ii];
+            }
+            partial_wl[i] = wirelength;
         }
-        partial_wl[i] = wirelength;
 
         T b_x = (*inv_gamma) / (exp_x_sum);
         T a_x = (1.0 - b_x * xexp_x_sum) / exp_x_sum;
@@ -91,7 +94,7 @@ __global__ void computeWeightedAverageWirelength(
             grads[flat_netpin[j]] = (a_x + b_x * xx) * exp_x - (a_nx + b_nx * xx) * exp_nx;
         }
     }
-    else if (ii < num_nets)
+    else if (ii < num_nets && partial_wl)
     {
         partial_wl[i] = 0;
     }

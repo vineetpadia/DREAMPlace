@@ -298,6 +298,30 @@ class WeightedAverageWirelengthOpTest(unittest.TestCase):
                                        rtol=1e-6,
                                        atol=1e-6)
 
+            # Gradient-only mode skips the unused scalar reduction but must
+            # preserve the merged operator's gradient exactly.
+            pin_pos_var.grad.zero_()
+            custom_cuda_fast = (
+                weighted_average_wirelength.WeightedAverageWirelength(
+                    flat_netpin=Variable(
+                        torch.from_numpy(flat_net2pin_map)).cuda(),
+                    netpin_start=Variable(
+                        torch.from_numpy(flat_net2pin_start_map)).cuda(),
+                    pin2net_map=torch.from_numpy(pin2net_map).cuda(),
+                    net_weights=torch.from_numpy(net_weights).cuda(),
+                    net_mask=torch.from_numpy(net_mask).cuda(),
+                    pin_mask=torch.from_numpy(pin_mask).cuda(),
+                    gamma=torch.tensor(gamma, dtype=dtype).cuda(),
+                    algorithm='merged',
+                    fast_mode=True)
+            )
+            result_cuda_fast = custom_cuda_fast.forward(pin_pos_var.cuda())
+            result_cuda_fast.backward()
+            grad_cuda_fast = pin_pos_var.grad.clone()
+
+            self.assertEqual(result_cuda_fast.item(), 0.0)
+            self.assertTrue(torch.equal(grad_cuda_fast, grad_cuda))
+
 
 def eval_runtime(design):
     # e.g,. adaptec1_wirelength.pklz
