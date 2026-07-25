@@ -562,17 +562,8 @@ __global__ void reset_state(DetailedPlaceDB<T> db, SwapState<T> state) {
   for (int i = blockIdx.x * blockDim.x + threadIdx.x;
        i < state.max_num_candidates_all; i += blockDim.x * gridDim.x) {
     SwapCandidate<T>& cand = state.candidates[i];
-    cand.cost = DREAMPLACE_CUDA_NAMESPACE::numeric_limits<T>::max();
     cand.node_id[0] = DREAMPLACE_CUDA_NAMESPACE::numeric_limits<int>::max();
     cand.node_id[1] = DREAMPLACE_CUDA_NAMESPACE::numeric_limits<int>::max();
-    cand.node_xl[0][0] = 0;
-    cand.node_xl[0][1] = 0;
-    cand.node_yl[0][0] = 0;
-    cand.node_yl[0][1] = 0;
-    cand.node_xl[1][0] = 0;
-    cand.node_xl[1][1] = 0;
-    cand.node_yl[1][0] = 0;
-    cand.node_yl[1][1] = 0;
   }
   for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < db.num_movable_nodes;
        i += blockDim.x * gridDim.x) {
