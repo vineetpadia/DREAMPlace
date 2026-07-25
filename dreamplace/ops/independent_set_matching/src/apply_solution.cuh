@@ -14,142 +14,114 @@
 
 DREAMPLACE_BEGIN_NAMESPACE
 
-template <typename T>
-__global__ void copy_orig_cost_kernel(const T* cost_matrices, const char* stop_flags, const int set_size, T* costs)
-{
-    int i = blockIdx.x; // set 
-
-    if (stop_flags[i])
-    {
-        auto cost_matrix = cost_matrices + i*set_size*set_size; 
-        auto cost = costs + i*set_size; 
-        for (int j = threadIdx.x; j < set_size; j += blockDim.x)
-        {
-            cost[j] = cost_matrix[j*set_size + j];
-        }
-    }
-}
-
-template <typename T>
-__global__ void copy_solution_cost_kernel(const T* cost_matrices, const char* stop_flags, const int* solutions, const int set_size, T* costs)
-{
-    int i = blockIdx.x; // set 
-
-    if (stop_flags[i])
-    {
-        auto cost_matrix = cost_matrices + i*set_size*set_size; 
-        auto cost = costs + i*set_size; 
-        auto solution = solutions + i*set_size; 
-        for (int j = threadIdx.x; j < set_size; j += blockDim.x)
-        {
-            int sol_k = solution[j];
-            cost[j] = cost_matrix[j*set_size + sol_k];
-        }
-    }
-}
-
 template <typename T, int BlockDim>
-__global__ void block_reduce_sum(T* costs, const char* stop_flags, int batch_size, int set_size)
+__global__ void compute_orig_and_solution_costs_kernel(
+        const T* cost_matrices,
+        const int* solutions,
+        const char* stop_flags,
+        int set_size,
+        T* orig_costs,
+        T* solution_costs)
 {
     int bid = blockIdx.x; // set 
     int tid = threadIdx.x; 
 
     if (stop_flags[bid])
     {
-        // Specialize BlockReduce for a 1D block of BlockDim threads on type int
         typedef cub::BlockReduce<T, BlockDim> BlockReduce;
-        // Allocate shared memory for BlockReduce
         __shared__ typename BlockReduce::TempStorage temp_storage;
-        // Obtain a segment of consecutive items that are blocked across threads
-        int thread_data[1];
+        const T* cost_matrix =
+            cost_matrices + bid*set_size*set_size;
+        const int* solution = solutions + bid*set_size;
+        T thread_data[1];
 
-        thread_data[0] = costs[bid*set_size + tid];
+        thread_data[0] = cost_matrix[tid*set_size + tid];
 
         __syncthreads();
 
-        // Compute the block-wide sum for thread0
-        T aggregate = BlockReduce(temp_storage).Sum(thread_data);
+        T orig_cost = BlockReduce(temp_storage).Sum(thread_data);
+
+        __syncthreads();
+
+        thread_data[0] =
+            cost_matrix[tid*set_size + solution[tid]];
+        T solution_cost = BlockReduce(temp_storage).Sum(thread_data);
 
         __syncthreads();
 
         if (tid == 0)
         {
-            costs[bid*set_size] = aggregate;
+            orig_costs[bid*set_size] = orig_cost;
+            solution_costs[bid*set_size] = solution_cost;
         }
     }
 }
 
 template <typename T>
-void compute_costs(const char* stop_flags, const int batch_size, const int set_size, T* costs)
+void compute_orig_and_solution_costs(
+        const T* cost_matrices,
+        const int* solutions,
+        const char* stop_flags,
+        const int batch_size,
+        const int set_size,
+        T* orig_costs,
+        T* solution_costs)
 {
     switch (set_size)
     {
         case 2:
-            block_reduce_sum<T, 2><<<batch_size, 2>>>(costs, stop_flags, batch_size, set_size);
+            compute_orig_and_solution_costs_kernel<T, 2>
+                <<<batch_size, 2>>>(cost_matrices, solutions, stop_flags,
+                                    set_size, orig_costs, solution_costs);
             break; 
         case 4:
-            block_reduce_sum<T, 4><<<batch_size, 4>>>(costs, stop_flags, batch_size, set_size);
+            compute_orig_and_solution_costs_kernel<T, 4>
+                <<<batch_size, 4>>>(cost_matrices, solutions, stop_flags,
+                                    set_size, orig_costs, solution_costs);
             break; 
         case 8:
-            block_reduce_sum<T, 8><<<batch_size, 8>>>(costs, stop_flags, batch_size, set_size);
+            compute_orig_and_solution_costs_kernel<T, 8>
+                <<<batch_size, 8>>>(cost_matrices, solutions, stop_flags,
+                                    set_size, orig_costs, solution_costs);
             break; 
         case 16:
-            block_reduce_sum<T, 16><<<batch_size, 16>>>(costs, stop_flags, batch_size, set_size);
+            compute_orig_and_solution_costs_kernel<T, 16>
+                <<<batch_size, 16>>>(cost_matrices, solutions, stop_flags,
+                                    set_size, orig_costs, solution_costs);
             break; 
         case 32:
-            block_reduce_sum<T, 32><<<batch_size, 32>>>(costs, stop_flags, batch_size, set_size);
+            compute_orig_and_solution_costs_kernel<T, 32>
+                <<<batch_size, 32>>>(cost_matrices, solutions, stop_flags,
+                                    set_size, orig_costs, solution_costs);
             break; 
         case 64:
-            block_reduce_sum<T, 64><<<batch_size, 64>>>(costs, stop_flags, batch_size, set_size);
+            compute_orig_and_solution_costs_kernel<T, 64>
+                <<<batch_size, 64>>>(cost_matrices, solutions, stop_flags,
+                                    set_size, orig_costs, solution_costs);
             break; 
         case 128:
-            block_reduce_sum<T, 128><<<batch_size, 128>>>(costs, stop_flags, batch_size, set_size);
+            compute_orig_and_solution_costs_kernel<T, 128>
+                <<<batch_size, 128>>>(cost_matrices, solutions, stop_flags,
+                                     set_size, orig_costs, solution_costs);
             break; 
         case 256:
-            block_reduce_sum<T, 256><<<batch_size, 256>>>(costs, stop_flags, batch_size, set_size);
+            compute_orig_and_solution_costs_kernel<T, 256>
+                <<<batch_size, 256>>>(cost_matrices, solutions, stop_flags,
+                                     set_size, orig_costs, solution_costs);
             break; 
         case 512:
-            block_reduce_sum<T, 512><<<batch_size, 512>>>(costs, stop_flags, batch_size, set_size);
+            compute_orig_and_solution_costs_kernel<T, 512>
+                <<<batch_size, 512>>>(cost_matrices, solutions, stop_flags,
+                                     set_size, orig_costs, solution_costs);
             break; 
         case 1024:
-            block_reduce_sum<T, 1024><<<batch_size, 1024>>>(costs, stop_flags, batch_size, set_size);
+            compute_orig_and_solution_costs_kernel<T, 1024>
+                <<<batch_size, 1024>>>(cost_matrices, solutions, stop_flags,
+                                      set_size, orig_costs, solution_costs);
             break; 
         default:
             dreamplaceAssertMsg(0, "unsupported set size %d", set_size);
     }
-}
-
-template <typename T>
-__global__ void print_copy_costs_kernel(const T* costs, int batch_size, int set_size)
-{
-    if (blockIdx.x == 0 && threadIdx.x == 0)
-    {
-        for (int i = 0; i < batch_size; ++i)
-        {
-            printf("[%d] orig/solution_costs ", i);
-            for (int j = 0; j < set_size; ++j)
-            {
-                printf("%g ", (float)costs[i*set_size+j]);
-            }
-            printf("\n");
-        }
-    }
-}
-
-template <typename T>
-void compute_orig_cost(const T* cost_matrices, const char* stop_flags, const int batch_size, const int set_size, T* costs)
-{
-    copy_orig_cost_kernel<<<batch_size, set_size>>>(cost_matrices, stop_flags, set_size, costs);
-    //print_copy_costs_kernel<<<1, 1>>>(costs, batch_size, set_size);
-    compute_costs(stop_flags, batch_size, set_size, costs);
-}
-
-template <typename T>
-void compute_solution_cost(const T* cost_matrices, const int* solutions, const char* stop_flags, const int batch_size, const int set_size, T* costs)
-{
-    copy_solution_cost_kernel<<<batch_size, set_size>>>(cost_matrices, stop_flags, solutions, set_size, costs);
-    //print_copy_costs_kernel<<<1, 1>>>(costs, batch_size, set_size);
-    compute_costs(stop_flags, batch_size, set_size, costs);
 }
 
 template <typename DetailedPlaceDBType, typename IndependentSetMatchingStateType>
@@ -317,8 +289,14 @@ __global__ void check_hpwl_kernel(DetailedPlaceDBType db, IndependentSetMatching
 template <typename DetailedPlaceDBType, typename IndependentSetMatchingStateType>
 void apply_solution(DetailedPlaceDBType& db, IndependentSetMatchingStateType& state)
 {
-    compute_orig_cost(state.cost_matrices, state.stop_flags, state.num_independent_sets, state.set_size, state.orig_costs); 
-    compute_solution_cost(state.cost_matrices, state.solutions, state.stop_flags, state.num_independent_sets, state.set_size, state.solution_costs);
+    compute_orig_and_solution_costs(
+            state.cost_matrices,
+            state.solutions,
+            state.stop_flags,
+            state.num_independent_sets,
+            state.set_size,
+            state.orig_costs,
+            state.solution_costs);
 #ifdef DEBUG
     //print_orig_and_solution_costs_kernel<<<1, 1>>>(state);
     //check_hpwl_kernel<<<1, 1>>>(db, state, state.independent_sets+state.set_size*3);
