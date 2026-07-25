@@ -930,7 +930,8 @@ void k_reorder(
             ceilDiv(group_size * MAX_NUM_NETS_PER_INSTANCE, 256), 256>>>(
             db, state, group_id, offset);
         // print_instance_net_bboxes<<<1, 1>>>(state, group_id, offset);
-        compute_reorder_hpwl<<<ceilDiv(group_size, 256), 256>>>(
+        compute_reorder_hpwl<<<
+            ceilDiv(group_size * state.num_permutations, 256), 256>>>(
             db, state, group_id, offset);
 #ifdef K_REORDER_PROFILE
         checkCUDA(cudaDeviceSynchronize());
