@@ -571,33 +571,49 @@ __global__ void compute_instance_nets(DetailedPlaceDB<T> db,
       (blockIdx.x * blockDim.x + threadIdx.x) / kWarpSize;
   int num_warps = blockDim.x * gridDim.x / kWarpSize;
   for (int inst_id = warp_id; inst_id < group_size; inst_id += num_warps) {
-    // this is a copy
-    auto inst = state.reorder_instances(group_id, inst_id);
-    inst.idx_bgn += offset;
-    inst.idx_end =
-        min(inst.idx_end + offset, state.row2node_map.size(inst.row_id));
-    const auto row2nodes = state.row2node_map(inst.row_id) + inst.idx_bgn;
-    int K = inst.idx_end - inst.idx_bgn;
+    const int* row2nodes = nullptr;
+    int K = 0;
+    if (lane_id == 0) {
+      // this is a copy
+      auto inst = state.reorder_instances(group_id, inst_id);
+      inst.idx_bgn += offset;
+      inst.idx_end =
+          min(inst.idx_end + offset, state.row2node_map.size(inst.row_id));
+      row2nodes = state.row2node_map(inst.row_id) + inst.idx_bgn;
+      K = inst.idx_end - inst.idx_bgn;
+
+      // after adding offset
+      for (int idx = 0; idx < K; ++idx) {
+        int node_id = row2nodes[idx];
+        if (node_id >= db.num_movable_nodes ||
+            db.node_size_y[node_id] > db.row_height) {
+          K = idx;
+          break;
+        }
+      }
+    }
+    K = __shfl_sync(kFullWarpMask, K, 0);
+
     int instance_nets_size = 0;
     auto instance_nets =
         state.instance_nets + inst_id * MAX_NUM_NETS_PER_INSTANCE;
 
-    // after adding offset
-    for (int idx = 0; idx < K; ++idx) {
-      int node_id = row2nodes[idx];
-      if (node_id >= db.num_movable_nodes ||
-          db.node_size_y[node_id] > db.row_height) {
-        inst.idx_end = inst.idx_bgn + idx;
-        K = idx;
-        break;
-      }
-    }
-
     for (int j = 0; j < K; ++j) {
-      int node_id = row2nodes[j];
-      int node_marker = state.node_markers[node_id];
-      int node2pin_id_bgn = db.flat_node2pin_start_map[node_id];
-      int node2pin_id_end = db.flat_node2pin_start_map[node_id + 1];
+      int node_marker = 0;
+      int node2pin_id_bgn = 0;
+      int node2pin_id_end = 0;
+      if (lane_id == 0) {
+        int node_id = row2nodes[j];
+        node_marker = state.node_markers[node_id];
+        node2pin_id_bgn = db.flat_node2pin_start_map[node_id];
+        node2pin_id_end = db.flat_node2pin_start_map[node_id + 1];
+      }
+      node_marker =
+          __shfl_sync(kFullWarpMask, node_marker, 0);
+      node2pin_id_bgn =
+          __shfl_sync(kFullWarpMask, node2pin_id_bgn, 0);
+      node2pin_id_end =
+          __shfl_sync(kFullWarpMask, node2pin_id_end, 0);
       for (int node2pin_id = node2pin_id_bgn;
            node2pin_id < node2pin_id_end; node2pin_id += kWarpSize) {
         int candidate_id = node2pin_id + lane_id;
