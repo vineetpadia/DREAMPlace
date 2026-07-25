@@ -756,12 +756,8 @@ template <typename T>
 __global__ void __launch_bounds__(64 * 4, 4)
     compute_candidate_cost(DetailedPlaceDB<T> db, SwapState<T> state) {
   extern __shared__ unsigned char cost_proxy[];
-  __shared__ int num_candidates;
   T* cost = reinterpret_cast<T*>(cost_proxy);
-  if (threadIdx.x == 0) {
-    num_candidates = (state.max_num_candidates_all << 2);
-  }
-  __syncthreads();
+  int num_candidates = state.max_num_candidates_all << 2;
   for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < num_candidates;
        i += blockDim.x * gridDim.x) {
     SwapCandidate<T>& cand = state.candidates[i >> 2];
