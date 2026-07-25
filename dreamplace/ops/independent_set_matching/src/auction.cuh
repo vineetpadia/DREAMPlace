@@ -294,9 +294,9 @@ linear_assignment_auction_kernel(const int num_nodes,
                     item2person[item_id] = high_bidder;
                 }
             }
-            __syncthreads();
-            
-            //update iteration
+
+            // The synchronization below makes both the assignments and the
+            // iteration update visible before the loop condition is checked.
             if(threadIdx.x == 0){
                 num_iteration++;
             }
