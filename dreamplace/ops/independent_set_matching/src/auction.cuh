@@ -21,28 +21,18 @@ DREAMPLACE_BEGIN_NAMESPACE
 #define BIG_NEGATIVE    -9999999
 #define MAX_MINIBATCH         64
 
-template <typename T>
 inline void init_auction(
         const int num_graphs, 
-        const int num_nodes, 
-        char*& scratch, 
         char*& stop_flags
         )
 {
-    checkCUDA(cudaMalloc(
-            &scratch,
-            num_graphs * 2 * num_nodes * sizeof(int) +
-            num_graphs * num_nodes * sizeof(unsigned long long) +
-            num_graphs * num_nodes * sizeof(T)));
     allocateCUDA(stop_flags, num_graphs, char);
 }
 
 inline void destroy_auction(
-        char* scratch, 
         char* stop_flags
         )
 {
-    destroyCUDA(scratch);
     destroyCUDA(stop_flags); 
 }
 
@@ -139,13 +129,10 @@ __global__ void print_stop_flags_kernel(char* stop_flags, int n)
 }
 
 template <typename T>
-__global__ void __launch_bounds__(1024, 14)
+__global__ void __launch_bounds__(1024)
 linear_assignment_auction_kernel(const int num_nodes,
                                         const T* __restrict__ data_ptr,
-                                        int* person2item_ptr, 
-                                        int*  item2person_ptr,
-                                        unsigned long long* winning_bids_ptr,
-                                        T*  prices_ptr,
+                                        int* solutions_ptr,
                                         char* stop_flag_ptr,
                                         const float auction_max_eps,
                                         const float auction_min_eps,
@@ -157,19 +144,24 @@ linear_assignment_auction_kernel(const int num_nodes,
     __shared__ float auction_eps;
     __shared__ int num_iteration;
     __shared__ int num_assigned;
-    extern __shared__ T s_prices[];
+    extern __shared__ unsigned long long shared_storage[];
+    const int price_words =
+        (num_nodes * sizeof(T) + sizeof(unsigned long long) - 1) /
+        sizeof(unsigned long long);
+    T* s_prices = reinterpret_cast<T*>(shared_storage);
+    unsigned long long* winning_bids = shared_storage + price_words;
+    int* person2item =
+        reinterpret_cast<int*>(winning_bids + num_nodes);
+    int* item2person = person2item + num_nodes;
 
     if(node_id == 0){
         auction_eps = auction_max_eps;
         num_iteration = 0;
     }
+    s_prices[node_id] = 0;
 
     const T* __restrict__ data = data_ptr + batch_id * num_nodes * num_nodes;
-    int* person2item = person2item_ptr + batch_id * num_nodes; 
-    int*  item2person = item2person_ptr + batch_id * num_nodes;
-    unsigned long long* winning_bids =
-        winning_bids_ptr + batch_id * num_nodes;
-    T*  prices = prices_ptr + batch_id * num_nodes;
+    int* solutions = solutions_ptr + batch_id * num_nodes;
     char* stop_flag = stop_flag_ptr + batch_id;
 
     __syncthreads();
@@ -193,8 +185,6 @@ linear_assignment_auction_kernel(const int num_nodes,
         {
             winning_bids[node_id] = 0;
 
-            //preload price
-            s_prices[node_id] = prices[node_id];
             __syncthreads();
 
             //phase 2: bidding
@@ -255,7 +245,7 @@ linear_assignment_auction_kernel(const int num_nodes,
                     atomicAdd(&num_assigned, 1);
                 }
     
-                prices[node_id]                += high_bid;
+                s_prices[node_id]              += high_bid;
                 person2item[high_bidder] = node_id;
                 item2person[node_id]           = high_bidder;
             }
@@ -274,6 +264,7 @@ linear_assignment_auction_kernel(const int num_nodes,
         __syncthreads();
     }
     __syncthreads();
+    solutions[node_id] = person2item[node_id];
     //report whether finish solving
     if(node_id == 0){
         *stop_flag = (num_assigned == num_nodes);
@@ -286,45 +277,30 @@ void linear_assignment_auction(
                 int*  solutions,
                 const int num_graphs,
                 const int num_nodes,
-                char* scratch,
                 char* stop_flags,
                 const float auction_max_eps,
                 const float auction_min_eps,
                 const float auction_factor,
                 const int max_iterations)
 {
-    //get pointers from scratch
-    int* person2item  = (int*) scratch;
-    int* item2person  = person2item + num_graphs * num_nodes;
-    unsigned long long* winning_bids =
-        reinterpret_cast<unsigned long long*>(
-            item2person + num_graphs * num_nodes);
-    T* prices = reinterpret_cast<T*>(
-        winning_bids + num_graphs * num_nodes);
-
-    //init
-    checkCUDA(cudaMemsetAsync(
-            prices, 0, num_graphs * num_nodes * sizeof(T)));
+    int shared_memory_size =
+        ((num_nodes * sizeof(T) + sizeof(unsigned long long) - 1) /
+         sizeof(unsigned long long) + num_nodes) *
+        sizeof(unsigned long long) +
+        num_nodes * 2 * sizeof(int);
 
     //launch solver
-    linear_assignment_auction_kernel<T><<<num_graphs, num_nodes, num_nodes*sizeof(T)>>>
+    linear_assignment_auction_kernel<T><<<num_graphs, num_nodes, shared_memory_size>>>
                                     (
                                         num_nodes,
                                         cost_matrics,
-                                        person2item,
-                                        item2person,
-                                        winning_bids,
-                                        prices,
+                                        solutions,
                                         stop_flags,
                                         auction_max_eps,
                                         auction_min_eps,
                                         auction_factor,
                                         max_iterations
                                     );
-    cudaDeviceSynchronize();
-
-    //copy solutions
-    cudaMemcpy(solutions, person2item, num_graphs * num_nodes * sizeof(int), cudaMemcpyDeviceToDevice);
 
 }
 
