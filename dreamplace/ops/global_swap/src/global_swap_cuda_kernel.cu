@@ -837,14 +837,25 @@ template <typename T>
 __global__ void apply_candidates(DetailedPlaceDB<T> db, SwapState<T> state,
                                  int num_candidates) {
 #ifdef DEBUG
-  assert(gridDim.x == 1 && blockDim.x == 1);
+  assert(gridDim.x == 1);
 #endif
+  extern __shared__ int4 shared_storage[];
+  SwapCandidate<T>* shared_candidates =
+      reinterpret_cast<SwapCandidate<T>*>(shared_storage);
+  for (int i = threadIdx.x; i < num_candidates; i += blockDim.x) {
+    shared_candidates[i] =
+        state.candidates[i * state.max_num_candidates];
+  }
+  __syncthreads();
+  if (threadIdx.x != 0) {
+    return;
+  }
+
   for (int i = 0; i < num_candidates; ++i) {
 #ifdef DEBUG
     assert(i * state.max_num_candidates < state.max_num_candidates_all);
 #endif
-    const SwapCandidate<T>& best_cand =
-        state.candidates[i * state.max_num_candidates];
+    const SwapCandidate<T>& best_cand = shared_candidates[i];
 
 #ifdef DEBUG
     if (best_cand.cost < 0) {
@@ -1132,8 +1143,11 @@ void global_swap(DetailedPlaceDB<T>& db, SwapState<T>& state)
 #endif
     // check_candidate_costs<<<ceilDiv(state.max_num_candidates_all, 256),
     // 256>>>(db, state);
-    // must use single thread
-    apply_candidates<<<1, 1>>>(db, state, idx_end - idx_bgn);
+    // Preserve the serial application order while loading candidates in
+    // parallel to hide scattered global-memory latency.
+    apply_candidates<<<1, 256,
+                       (idx_end - idx_bgn) * sizeof(SwapCandidate<T>)>>>(
+        db, state, idx_end - idx_bgn);
 #ifdef TIMER
     checkCUDA(cudaDeviceSynchronize());
     timer_stop = CPUTimer::getGlobaltime();
