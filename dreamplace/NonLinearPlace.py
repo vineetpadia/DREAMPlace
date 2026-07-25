@@ -359,6 +359,10 @@ class NonLinearPlace(BasicPlace.BasicPlace):
                 #    window2
                 #             window1
                 moving_avg_window = max(min(model.Lsub_iteration // 2, 3), 1)
+                density_weight_initialized = False
+                zero_grad_supports_set_to_none = (
+                    "set_to_none" in inspect.signature(optimizer.zero_grad).parameters
+                )
 
                 def Lsub_stop_criterion(Lgamma_step, Llambda_density_weight_step, Lsub_step, metrics):
                     with torch.no_grad():
@@ -382,6 +386,7 @@ class NonLinearPlace(BasicPlace.BasicPlace):
                 def one_descent_step(
                     Lgamma_step, Llambda_density_weight_step, Lsub_step, iteration, metrics, stop_mask=None
                 ):
+                    nonlocal density_weight_initialized
                     t0 = time.time()
 
                     # metric for this iteration
@@ -397,27 +402,29 @@ class NonLinearPlace(BasicPlace.BasicPlace):
                     self.op_collections.move_boundary_op(pos)
 
                     # handle multiple density weights for multi-electric field
-                    if torch.eq(model.density_weight.mean(), 0.0):
-                        model.initialize_density_weight(params, placedb)
-                        if model.density_weight.size(0) == 1:
-                            logging.info("density_weight = %.6E" % (model.density_weight.data))
-                        else:
-                            logging.info(
-                                "density_weight = [%s]"
-                                % ", ".join(["%.3E" % i for i in model.density_weight.cpu().numpy().tolist()])
-                            )
+                    if not density_weight_initialized:
+                        if torch.eq(model.density_weight.mean(), 0.0):
+                            model.initialize_density_weight(params, placedb)
+                            if model.density_weight.size(0) == 1:
+                                logging.info("density_weight = %.6E" % (model.density_weight.data))
+                            else:
+                                logging.info(
+                                    "density_weight = [%s]"
+                                    % ", ".join(["%.3E" % i for i in model.density_weight.cpu().numpy().tolist()])
+                                )
+                        density_weight_initialized = True
 
                     # For backward compatibility
                     # PyTorch 1.7 introduced zero_grad(set_to_none=False)
                     # PyTorch 2.0 changed set_to_none=True
-                    if "set_to_none" in inspect.signature(optimizer.zero_grad).parameters: 
+                    if zero_grad_supports_set_to_none:
                         optimizer.zero_grad(set_to_none=False)
                     else:
                         optimizer.zero_grad()
 
                     # t1 = time.time()
                     cur_metric.evaluate(placedb, eval_ops, pos, model.data_collections)
-                    model.overflow = cur_metric.overflow.data.clone()
+                    model.overflow = cur_metric.overflow.detach()
                     # logging.debug("evaluation %.3f ms" % ((time.time()-t1)*1000))
                     # t2 = time.time()
 
