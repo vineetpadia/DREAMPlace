@@ -104,6 +104,7 @@ class NonLinearPlace(BasicPlace.BasicPlace):
                 # As global placement may easily diverge, we record the position of best overflow
                 best_metric = [None]
                 best_overflow = [float("inf")]
+                best_hpwl = [None]
                 best_pos = [None]
 
                 if params.gpu:
@@ -545,10 +546,16 @@ class NonLinearPlace(BasicPlace.BasicPlace):
                     # actually reports the metric before step
                     logging.info(cur_metric)
                     cur_overflow = cur_metric.overflow[-1].item()
+                    cur_hpwl = (
+                        cur_metric.hpwl.item()
+                        if len(placedb.regions) == 0
+                        else None
+                    )
                     # record the best outer cell overflow
                     if best_metric[0] is None or best_overflow[0] > cur_overflow:
                         best_metric[0] = cur_metric
                         best_overflow[0] = cur_overflow
+                        best_hpwl[0] = cur_hpwl
                         # A position snapshot is only consumed by the non-fence
                         # divergence rollback below, which is disabled until
                         # overflow enters this range. Keep tracking the best
@@ -564,7 +571,7 @@ class NonLinearPlace(BasicPlace.BasicPlace):
                                 best_pos[0].data.copy_(self.pos[0].data)
 
                     logging.info("full step %.3f ms" % ((time.time() - t0) * 1000))
-                    return cur_overflow
+                    return cur_overflow, cur_hpwl
 
                 def check_plateau(x, window=10, threshold=0.001):
                     if len(x) < window:
@@ -573,7 +580,11 @@ class NonLinearPlace(BasicPlace.BasicPlace):
                     return (np.max(x) - np.min(x)) / np.mean(x) < threshold
 
                 def check_divergence(x, window=50, threshold=0.05):
-                    if len(x) < window or best_metric[0] is None:
+                    if (
+                        len(x) < window
+                        or best_metric[0] is None
+                        or best_hpwl[0] is None
+                    ):
                         return False
                     x = np.array(x[-window:])
                     overflow_mean = np.mean(x[:, 1])
@@ -581,13 +592,13 @@ class NonLinearPlace(BasicPlace.BasicPlace):
                     overflow_diff = np.sum(overflow_diff) / overflow_diff.shape[0]
                     overflow_range = np.max(x[:, 1]) - np.min(x[:, 1])
                     wl_mean = np.mean(x[:, 0])
-                    wl_ratio, overflow_ratio = (wl_mean - best_metric[0].hpwl.item()) / best_metric[
-                        0
-                    ].hpwl.item(), (
-                        overflow_mean - max(params.stop_overflow, best_metric[0].overflow.item())
-                    ) / best_metric[
-                        0
-                    ].overflow.item()
+                    wl_ratio = (
+                        wl_mean - best_hpwl[0]
+                    ) / best_hpwl[0]
+                    overflow_ratio = (
+                        overflow_mean
+                        - max(params.stop_overflow, best_overflow[0])
+                    ) / best_overflow[0]
                     if wl_ratio > threshold * 1.2:
                         # this condition is not suitable for routability-driven opt with cell inflation
                         if (not params.routability_opt_flag) and overflow_ratio > threshold:
@@ -691,7 +702,7 @@ class NonLinearPlace(BasicPlace.BasicPlace):
                                     "possible DIVERGENCE detected, roll back to the best position recorded"
                                 )
 
-                            cur_overflow = one_descent_step(
+                            cur_overflow, cur_hpwl = one_descent_step(
                                 Lgamma_step, Llambda_density_weight_step, Lsub_step, iteration, Lsub_metrics
                             )
 
@@ -699,7 +710,7 @@ class NonLinearPlace(BasicPlace.BasicPlace):
                                 overflow_list.append(cur_overflow)
                                 divergence_list.append(
                                     [
-                                        Llambda_metrics[-1][-1].hpwl.data.item(),
+                                        cur_hpwl,
                                         cur_overflow,
                                     ]
                                 )
@@ -825,6 +836,7 @@ class NonLinearPlace(BasicPlace.BasicPlace):
                                 # reset best metric
                                 best_metric[0] = None
                                 best_overflow[0] = float("inf")
+                                best_hpwl[0] = None
                                 best_pos[0] = None
 
                                 break
