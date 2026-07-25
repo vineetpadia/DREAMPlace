@@ -90,11 +90,8 @@ struct IndependentSetMatchingState
     cost_type* max_costs = nullptr; ///< maximum cost for each independent set
     int* solutions = nullptr; ///< batch_size*set_size
     char* stop_flags = nullptr; ///< record stopping status from auction solver 
-    T* orig_x = nullptr; ///< original locations of cells for applying solutions 
-    T* orig_y = nullptr; 
     cost_type* orig_costs = nullptr; ///< original costs 
     cost_type* solution_costs = nullptr; ///< solution costs 
-    Space<T>* orig_spaces = nullptr; ///< original spaces of cells for apply solutions 
 
     int batch_size; ///< pre-allocated number of independent sets 
     int set_size; 
@@ -337,10 +334,6 @@ int independentSetMatchingCUDALauncher(DetailedPlaceDB<T> db,
         ////allocateCUDA(state.center_ys, state.batch_size*NUM_NODE_SIZES, T);
         //allocateCUDA(state.cluster_sizes, state.batch_size*NUM_NODE_SIZES, T);
         ////allocateCUDA(state.device_num_independent_sets, 1, int);
-        allocateCUDA(state.orig_x, state.batch_size*state.set_size, T); 
-        allocateCUDA(state.orig_y, state.batch_size*state.set_size, T); 
-        allocateCUDA(state.orig_spaces, state.batch_size*state.set_size, Space<T>); 
-
         allocateCUDA(state.selected_markers, db.num_nodes, int);
         allocateCUDA(state.dependent_markers, db.num_nodes, unsigned char);
         allocateCUDA(state.independent_set_empty_flag, 1, int); 
@@ -520,9 +513,6 @@ int independentSetMatchingCUDALauncher(DetailedPlaceDB<T> db,
         destroyCUDA(state.solutions);
         destroyCUDA(state.orig_costs);
         destroyCUDA(state.solution_costs);
-        destroyCUDA(state.orig_x);
-        destroyCUDA(state.orig_y);
-        destroyCUDA(state.orig_spaces);
         destroyCUDA(state.selected_markers);
         destroyCUDA(state.dependent_markers);
         destroyCUDA(state.independent_set_empty_flag);
