@@ -811,6 +811,10 @@ __global__ void apply_candidates(DetailedPlaceDB<T> db, SwapState<T> state,
 #ifdef DEBUG
   assert(gridDim.x == 1);
 #endif
+  typedef cub::BlockScan<int, 256> BlockScan;
+  __shared__ typename BlockScan::TempStorage scan_storage;
+  __shared__ int negative_candidate_indices[256];
+  __shared__ int num_negative_candidates;
   extern __shared__ int4 shared_storage[];
   SwapCandidate<T>* shared_candidates =
       reinterpret_cast<SwapCandidate<T>*>(shared_storage);
@@ -819,15 +823,33 @@ __global__ void apply_candidates(DetailedPlaceDB<T> db, SwapState<T> state,
         state.candidates[i * state.max_num_candidates];
   }
   __syncthreads();
+
+  int negative = threadIdx.x < num_candidates &&
+                 shared_candidates[threadIdx.x].cost < 0;
+  int negative_offset;
+  int negative_count;
+  BlockScan(scan_storage).ExclusiveSum(
+      negative, negative_offset, negative_count);
+  if (negative) {
+    negative_candidate_indices[negative_offset] = threadIdx.x;
+  }
+  if (threadIdx.x == 0) {
+    num_negative_candidates = negative_count;
+  }
+  __syncthreads();
+
   if (threadIdx.x != 0) {
     return;
   }
 
-  for (int i = 0; i < num_candidates; ++i) {
+  for (int i = 0; i < num_negative_candidates; ++i) {
+    int candidate_index = negative_candidate_indices[i];
 #ifdef DEBUG
-    assert(i * state.max_num_candidates < state.max_num_candidates_all);
+    assert(candidate_index * state.max_num_candidates <
+           state.max_num_candidates_all);
 #endif
-    const SwapCandidate<T>& best_cand = shared_candidates[i];
+    const SwapCandidate<T>& best_cand =
+        shared_candidates[candidate_index];
 
 #ifdef DEBUG
     if (best_cand.cost < 0) {
@@ -883,7 +905,8 @@ __global__ void apply_candidates(DetailedPlaceDB<T> db, SwapState<T> state,
               "[DEBUG  ] (%g%%) swap node %d (w %g) and node %d (w %g), (%g, "
               "%g) => (%g, %g), (%g, %g) => (%g, %g), space (%g, %g), (%g, "
               "%g), best_cost %g\n",
-              i / (T)db.num_movable_nodes * 100, best_cand.node_id[0],
+              candidate_index / (T)db.num_movable_nodes * 100,
+              best_cand.node_id[0],
               (float)db.node_size_x[best_cand.node_id[0]], best_cand.node_id[1],
               (float)db.node_size_x[best_cand.node_id[1]],
               (float)db.x[best_cand.node_id[0]],
