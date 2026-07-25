@@ -71,6 +71,13 @@ class NesterovAcceleratedGradientOptimizer(Optimizer):
         self.obj_and_grad_fn = obj_and_grad_fn
         self.constraint_fn = constraint_fn
         self.use_bb = use_bb
+        self._can_fuse_boundary = all(
+            hasattr(constraint_fn, name)
+            for name in (
+                "node_size_x", "node_size_y", "xl", "yl", "xh", "yh",
+                "num_movable_nodes", "num_filler_nodes",
+            )
+        )
 
         # I do not know how to get generator's length
         if len(self.param_groups) != 1:
@@ -171,10 +178,23 @@ class NesterovAcceleratedGradientOptimizer(Optimizer):
                     # and immediately discarding a graph every iteration.
                     if (nesterov_update_cuda is not None and u_kp1.is_cuda
                             and isinstance(a_k, np.float32)):
-                        nesterov_update_cuda.forward(
-                            v_k.data, g_k, u_k, alpha_k, coef,
-                            u_kp1, v_kp1.data)
+                        can_fuse_boundary = self._can_fuse_boundary
+                        if can_fuse_boundary:
+                            nesterov_update_cuda.forward_with_boundary(
+                                v_k.data, g_k, u_k, alpha_k, coef,
+                                constraint_fn.node_size_x,
+                                constraint_fn.node_size_y,
+                                constraint_fn.xl, constraint_fn.yl,
+                                constraint_fn.xh, constraint_fn.yh,
+                                constraint_fn.num_movable_nodes,
+                                constraint_fn.num_filler_nodes,
+                                u_kp1, v_kp1.data)
+                        else:
+                            nesterov_update_cuda.forward(
+                                v_k.data, g_k, u_k, alpha_k, coef,
+                                u_kp1, v_kp1.data)
                     else:
+                        can_fuse_boundary = False
                         torch.mul(alpha_k, g_k, out=u_kp1)
                         torch.sub(v_k.data, u_kp1, out=u_kp1)
                         #constraint_fn(u_kp1)
@@ -183,7 +203,8 @@ class NesterovAcceleratedGradientOptimizer(Optimizer):
                         torch.add(u_kp1, v_kp1.data, out=v_kp1.data)
                     # make sure v_kp1 subjects to constraints
                     # g_kp1 must correspond to v_kp1
-                    constraint_fn(v_kp1)
+                    if not can_fuse_boundary:
+                        constraint_fn(v_kp1)
 
                     f_kp1, g_kp1 = obj_and_grad_fn(v_kp1)
 

@@ -8,9 +8,17 @@ void nesterovUpdateCudaLauncher(
     const T* v_k, const T* g_k, const T* u_k, const T* alpha_k,
     T coefficient, T* u_kp1, T* v_kp1, int numel);
 
-void nesterov_update_forward(
-    at::Tensor v_k, at::Tensor g_k, at::Tensor u_k, at::Tensor alpha_k,
-    double coefficient, at::Tensor u_kp1, at::Tensor v_kp1) {
+template <typename T>
+void nesterovUpdateWithBoundaryCudaLauncher(
+    const T* v_k, const T* g_k, const T* u_k, const T* alpha_k,
+    T coefficient, const T* node_size_x, const T* node_size_y, T xl, T yl,
+    T xh, T yh, int num_movable_nodes, int num_filler_nodes, T* u_kp1,
+    T* v_kp1, int numel);
+
+void check_nesterov_tensors(
+    const at::Tensor& v_k, const at::Tensor& g_k, const at::Tensor& u_k,
+    const at::Tensor& alpha_k, const at::Tensor& u_kp1,
+    const at::Tensor& v_kp1) {
   CHECK_FLAT_CUDA(v_k);
   CHECK_FLAT_CUDA(g_k);
   CHECK_FLAT_CUDA(u_k);
@@ -35,6 +43,12 @@ void nesterov_update_forward(
           u_kp1.scalar_type() == v_k.scalar_type() &&
           v_kp1.scalar_type() == v_k.scalar_type(),
       "all Nesterov state tensors must have the same dtype");
+}
+
+void nesterov_update_forward(
+    at::Tensor v_k, at::Tensor g_k, at::Tensor u_k, at::Tensor alpha_k,
+    double coefficient, at::Tensor u_kp1, at::Tensor v_kp1) {
+  check_nesterov_tensors(v_k, g_k, u_k, alpha_k, u_kp1, v_kp1);
 
   DREAMPLACE_DISPATCH_FLOATING_TYPES(v_k, "nesterovUpdateCudaLauncher", [&] {
     nesterovUpdateCudaLauncher<scalar_t>(
@@ -48,9 +62,51 @@ void nesterov_update_forward(
   });
 }
 
+void nesterov_update_with_boundary_forward(
+    at::Tensor v_k, at::Tensor g_k, at::Tensor u_k, at::Tensor alpha_k,
+    double coefficient, at::Tensor node_size_x, at::Tensor node_size_y,
+    double xl, double yl, double xh, double yh, int num_movable_nodes,
+    int num_filler_nodes, at::Tensor u_kp1, at::Tensor v_kp1) {
+  check_nesterov_tensors(v_k, g_k, u_k, alpha_k, u_kp1, v_kp1);
+  CHECK_FLAT_CUDA(node_size_x);
+  CHECK_FLAT_CUDA(node_size_y);
+  CHECK_CONTIGUOUS(node_size_x);
+  CHECK_CONTIGUOUS(node_size_y);
+  CHECK_EVEN(v_k);
+  int num_nodes = v_k.numel() / 2;
+  AT_ASSERTM(
+      node_size_x.numel() == num_nodes && node_size_y.numel() == num_nodes,
+      "node sizes must match half the position tensor length");
+  AT_ASSERTM(
+      node_size_x.scalar_type() == v_k.scalar_type() &&
+          node_size_y.scalar_type() == v_k.scalar_type(),
+      "node sizes and Nesterov state tensors must have the same dtype");
+
+  DREAMPLACE_DISPATCH_FLOATING_TYPES(
+      v_k, "nesterovUpdateWithBoundaryCudaLauncher", [&] {
+        nesterovUpdateWithBoundaryCudaLauncher<scalar_t>(
+            DREAMPLACE_TENSOR_DATA_PTR(v_k, scalar_t),
+            DREAMPLACE_TENSOR_DATA_PTR(g_k, scalar_t),
+            DREAMPLACE_TENSOR_DATA_PTR(u_k, scalar_t),
+            DREAMPLACE_TENSOR_DATA_PTR(alpha_k, scalar_t),
+            static_cast<scalar_t>(coefficient),
+            DREAMPLACE_TENSOR_DATA_PTR(node_size_x, scalar_t),
+            DREAMPLACE_TENSOR_DATA_PTR(node_size_y, scalar_t),
+            static_cast<scalar_t>(xl), static_cast<scalar_t>(yl),
+            static_cast<scalar_t>(xh), static_cast<scalar_t>(yh),
+            num_movable_nodes, num_filler_nodes,
+            DREAMPLACE_TENSOR_DATA_PTR(u_kp1, scalar_t),
+            DREAMPLACE_TENSOR_DATA_PTR(v_kp1, scalar_t), v_k.numel());
+      });
+}
+
 DREAMPLACE_END_NAMESPACE
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("forward", &DREAMPLACE_NAMESPACE::nesterov_update_forward,
         "Nesterov state update (CUDA)");
+  m.def(
+      "forward_with_boundary",
+      &DREAMPLACE_NAMESPACE::nesterov_update_with_boundary_forward,
+      "Nesterov state update with boundary projection (CUDA)");
 }

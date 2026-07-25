@@ -42,13 +42,21 @@ __device__ __forceinline__ double rounded_add(double lhs, double rhs) {
   return __dadd_rn(lhs, rhs);
 }
 
-template <typename T>
-__global__ void nesterovUpdate(
+template <typename T, bool ApplyBoundary>
+__global__ void nesterovUpdateKernel(
     const T* __restrict__ v_k,
     const T* __restrict__ g_k,
     const T* __restrict__ u_k,
     const T* __restrict__ alpha_k,
     T coefficient,
+    const T* __restrict__ node_size_x,
+    const T* __restrict__ node_size_y,
+    T xl,
+    T yl,
+    T xh,
+    T yh,
+    int num_movable_nodes,
+    int num_filler_nodes,
     T* __restrict__ u_kp1,
     T* __restrict__ v_kp1,
     int numel) {
@@ -59,6 +67,20 @@ __global__ void nesterovUpdate(
     T extrapolation = rounded_sub(next_u, u_k[i]);
     extrapolation = rounded_mul(extrapolation, coefficient);
     T next_v = rounded_add(next_u, extrapolation);
+    if (ApplyBoundary) {
+      int num_nodes = numel >> 1;
+      int node_id = i < num_nodes ? i : i - num_nodes;
+      if (node_id < num_movable_nodes ||
+          node_id >= num_nodes - num_filler_nodes) {
+        if (i < num_nodes) {
+          next_v = min(rounded_sub(xh, node_size_x[node_id]),
+                       max(xl, next_v));
+        } else {
+          next_v = min(rounded_sub(yh, node_size_y[node_id]),
+                       max(yl, next_v));
+        }
+      }
+    }
     u_kp1[i] = next_u;
     v_kp1[i] = next_v;
   }
@@ -69,15 +91,35 @@ void nesterovUpdateCudaLauncher(
     const T* v_k, const T* g_k, const T* u_k, const T* alpha_k,
     T coefficient, T* u_kp1, T* v_kp1, int numel) {
   constexpr int thread_count = 256;
-  nesterovUpdate<<<ceilDiv(numel, thread_count), thread_count, 0,
-                   DREAMPLACE_STREAM>>>(
-      v_k, g_k, u_k, alpha_k, coefficient, u_kp1, v_kp1, numel);
+  nesterovUpdateKernel<T, false>
+      <<<ceilDiv(numel, thread_count), thread_count, 0, DREAMPLACE_STREAM>>>(
+          v_k, g_k, u_k, alpha_k, coefficient, nullptr, nullptr, 0, 0, 0, 0,
+          0, 0, u_kp1, v_kp1, numel);
 }
 
-#define REGISTER_KERNEL_LAUNCHER(T)                                      \
-  template void nesterovUpdateCudaLauncher<T>(                           \
-      const T* v_k, const T* g_k, const T* u_k, const T* alpha_k,         \
-      T coefficient, T* u_kp1, T* v_kp1, int numel);
+template <typename T>
+void nesterovUpdateWithBoundaryCudaLauncher(
+    const T* v_k, const T* g_k, const T* u_k, const T* alpha_k,
+    T coefficient, const T* node_size_x, const T* node_size_y, T xl, T yl,
+    T xh, T yh, int num_movable_nodes, int num_filler_nodes, T* u_kp1,
+    T* v_kp1, int numel) {
+  constexpr int thread_count = 256;
+  nesterovUpdateKernel<T, true>
+      <<<ceilDiv(numel, thread_count), thread_count, 0, DREAMPLACE_STREAM>>>(
+          v_k, g_k, u_k, alpha_k, coefficient, node_size_x, node_size_y, xl,
+          yl, xh, yh, num_movable_nodes, num_filler_nodes, u_kp1, v_kp1,
+          numel);
+}
+
+#define REGISTER_KERNEL_LAUNCHER(T)                                        \
+  template void nesterovUpdateCudaLauncher<T>(                             \
+      const T* v_k, const T* g_k, const T* u_k, const T* alpha_k,           \
+      T coefficient, T* u_kp1, T* v_kp1, int numel);                       \
+  template void nesterovUpdateWithBoundaryCudaLauncher<T>(                 \
+      const T* v_k, const T* g_k, const T* u_k, const T* alpha_k,           \
+      T coefficient, const T* node_size_x, const T* node_size_y, T xl,      \
+      T yl, T xh, T yh, int num_movable_nodes, int num_filler_nodes,        \
+      T* u_kp1, T* v_kp1, int numel);
 
 REGISTER_KERNEL_LAUNCHER(float);
 REGISTER_KERNEL_LAUNCHER(double);
