@@ -8,6 +8,7 @@
 DREAMPLACE_BEGIN_NAMESPACE
 
 #define MAX_NODE_DEGREE 32
+constexpr int kCostMatrixRowsPerBlock = 2;
 
 template <typename DetailedPlaceDBType, typename IndependentSetMatchingStateType>
 __global__ void print_net_boxes_kernel(DetailedPlaceDBType db, IndependentSetMatchingStateType state)
@@ -36,13 +37,16 @@ template <typename DetailedPlaceDBType, typename IndependentSetMatchingStateType
 __global__ void compute_cost_matrix_kernel(DetailedPlaceDBType db, IndependentSetMatchingStateType state)
 {
     int i = blockIdx.y; // set 
-    int j = blockIdx.x; // node in set 
     const int* __restrict__ independent_set = state.independent_sets + i*state.set_size; 
-    auto cost_matrix = state.cost_matrices + i*state.cost_matrix_size + j*state.set_size; 
     __shared__ DreamPlace::Utility::SharedBox<typename DetailedPlaceDBType::type> net_boxes[MAX_NODE_DEGREE]; 
     __shared__ typename DetailedPlaceDBType::type pin_offset_x[MAX_NODE_DEGREE];
     __shared__ typename DetailedPlaceDBType::type pin_offset_y[MAX_NODE_DEGREE];
     __shared__ unsigned char net_enabled[MAX_NODE_DEGREE];
+    int j_end = min(
+        (blockIdx.x + 1) * kCostMatrixRowsPerBlock, state.set_size);
+    for (int j = blockIdx.x * kCostMatrixRowsPerBlock; j < j_end; ++j)
+    {
+    auto cost_matrix = state.cost_matrices + i*state.cost_matrix_size + j*state.set_size;
     int node_id = independent_set[j];
     typename DetailedPlaceDBType::type node_width =
         DREAMPLACE_CUDA_NAMESPACE::numeric_limits<
@@ -199,6 +203,11 @@ __global__ void compute_cost_matrix_kernel(DetailedPlaceDBType db, IndependentSe
             cost = BIG_NEGATIVE; // as a marker for post processing
         }
     }
+    if (j + 1 < j_end)
+    {
+        __syncthreads();
+    }
+    }
 }
 
 /// @brief change from minimization problem for maximization problem with non-negative edge weights 
@@ -343,8 +352,11 @@ __global__ void reduce_cost_matrix_max_kernel(
 template <typename DetailedPlaceDBType, typename IndependentSetMatchingStateType>
 void cost_matrix_construction(const DetailedPlaceDBType& db, IndependentSetMatchingStateType& state)
 {
+    dim3 compute_grid(
+        ceilDiv(state.set_size, kCostMatrixRowsPerBlock),
+        state.num_independent_sets, 1);
     dim3 grid (state.set_size, state.num_independent_sets, 1);
-    compute_cost_matrix_kernel<<<grid, state.set_size>>>(db, state);
+    compute_cost_matrix_kernel<<<compute_grid, state.set_size>>>(db, state);
 #ifdef DEBUG
     //print_cost_matrix_kernel<<<1, 1>>>(state.cost_matrices + state.cost_matrix_size*3, state.set_size);
 #endif
