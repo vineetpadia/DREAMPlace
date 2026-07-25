@@ -319,7 +319,8 @@ void cost_matrix_construction(const DetailedPlaceDBType& db, IndependentSetMatch
             state.cost_matrices, state.max_costs,
             state.cost_matrix_size);
 
-    postprocess_cost_matrix_kernel<<<grid, state.set_size>>>(db, state);
+    constexpr int postprocess_threads = 64;
+    postprocess_cost_matrix_kernel<<<grid, postprocess_threads>>>(db, state);
 #ifdef DEBUG
     //print_max_cost_kernel<<<1, 1>>>(state);
 
