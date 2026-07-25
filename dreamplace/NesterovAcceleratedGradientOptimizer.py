@@ -248,10 +248,8 @@ class NesterovAcceleratedGradientOptimizer(Optimizer):
                 #    torch.cuda.synchronize()
                 #logging.debug("\tline search %.3f ms" % ((time.time()-ttt)*1000))
 
-                v_k_1.data.copy_(v_k.data)
-                g_k_1.data.copy_(g_k.data)
-                obj_k_1.data.copy_(obj_k.data)
-
+                # v_k_1, g_k_1, and obj_k_1 are only used to initialize
+                # alpha_k in non-BB mode. No later iteration reads them.
                 group['u_k'][i], group['u_kp1'][i] = u_kp1, u_k
                 v_k.data.copy_(v_kp1.data)
                 g_k.data.copy_(g_kp1.data)
