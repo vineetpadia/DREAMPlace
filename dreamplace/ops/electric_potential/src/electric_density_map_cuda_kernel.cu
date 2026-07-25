@@ -453,7 +453,8 @@ int computeTriangleDensityMapCudaLauncher(
     const int num_bins_x, const int num_bins_y, int num_impacted_bins_x,
     int num_impacted_bins_y, const T xl, const T yl, const T xh, const T yh,
     const T bin_size_x, const T bin_size_y, bool deterministic_flag,
-    T *density_map_tensor, const int *sorted_node_map,
+    T *density_map_tensor, const T *density_map_input_tensor,
+    const int *sorted_node_map,
     unsigned long long int *deterministic_workspace) {
   if (deterministic_flag)  // deterministic implementation using unsigned long
                            // as fixed point number
@@ -477,7 +478,8 @@ int computeTriangleDensityMapCudaLauncher(
     int thread_count = 512;
     copyScaleArray<<<(num_bins + thread_count - 1) / thread_count,
                      thread_count, 0, DREAMPLACE_STREAM>>>(
-        scaled_density_map_tensor, density_map_tensor, scale_factor, num_bins);
+        scaled_density_map_tensor, density_map_input_tensor, scale_factor,
+        num_bins);
     computeTriangleDensityMapCallKernel<T, decltype(atomic_add_op)>(
         x_tensor, y_tensor, node_size_x_clamped_tensor,
         node_size_y_clamped_tensor, offset_x_tensor, offset_y_tensor,
@@ -601,7 +603,7 @@ int computeExactDensityMapCudaLauncher(
       const int num_impacted_bins_x, const int num_impacted_bins_y,            \
       const T xl, const T yl, const T xh, const T yh, const T bin_size_x,      \
       const T bin_size_y, bool deterministic_flag, T *density_map_tensor,      \
-      const int *sorted_node_map,                                               \
+      const T *density_map_input_tensor, const int *sorted_node_map,            \
       unsigned long long int *deterministic_workspace);                         \
                                                                                \
   template int computeExactDensityMapCudaLauncher<T>(                          \

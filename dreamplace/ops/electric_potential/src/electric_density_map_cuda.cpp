@@ -21,7 +21,8 @@ int computeTriangleDensityMapCudaLauncher(
     const int num_bins_x, const int num_bins_y, int num_impacted_bins_x,
     int num_impacted_bins_y, const T xl, const T yl, const T xh, const T yh,
     const T bin_size_x, const T bin_size_y, bool deterministic_flag,
-    T* density_map_tensor, const int* sorted_node_map,
+    T* density_map_tensor, const T* density_map_input_tensor,
+    const int* sorted_node_map,
     unsigned long long int* deterministic_workspace);
 
 // The exact density model
@@ -84,7 +85,14 @@ at::Tensor density_map(
   CHECK_EVEN(pos);
   CHECK_CONTIGUOUS(pos);
 
-  at::Tensor density_map = initial_density_map.clone();
+  // The deterministic launcher first converts its input map into the integer
+  // workspace.  Feed it the immutable fixed-cell map directly, so the float
+  // output only needs allocation here rather than a full device-side clone.
+  bool has_nodes = num_movable_nodes || num_filler_nodes;
+  at::Tensor density_map =
+      deterministic_flag && has_nodes
+          ? at::empty(initial_density_map.sizes(), initial_density_map.options())
+          : initial_density_map.clone();
   int num_nodes = pos.numel() / 2;
 
   // Use the caching allocator once per density evaluation instead of
@@ -123,6 +131,7 @@ at::Tensor density_map(
             num_movable_impacted_bins_x, num_movable_impacted_bins_y, xl, yl,
             xh, yh, bin_size_x, bin_size_y, (bool)deterministic_flag,
             DREAMPLACE_TENSOR_DATA_PTR(density_map, scalar_t),
+            DREAMPLACE_TENSOR_DATA_PTR(initial_density_map, scalar_t),
             DREAMPLACE_TENSOR_DATA_PTR(sorted_node_map, int),
             deterministic_workspace_ptr);
       });
@@ -150,7 +159,11 @@ at::Tensor density_map(
               num_filler_nodes, num_bins_x, num_bins_y,
               num_filler_impacted_bins_x, num_filler_impacted_bins_y, xl, yl,
               xh, yh, bin_size_x, bin_size_y, (bool)deterministic_flag,
-              DREAMPLACE_TENSOR_DATA_PTR(density_map, scalar_t), NULL,
+              DREAMPLACE_TENSOR_DATA_PTR(density_map, scalar_t),
+              num_movable_nodes
+                  ? DREAMPLACE_TENSOR_DATA_PTR(density_map, scalar_t)
+                  : DREAMPLACE_TENSOR_DATA_PTR(initial_density_map, scalar_t),
+              NULL,
               deterministic_workspace_ptr);
         });
   }
