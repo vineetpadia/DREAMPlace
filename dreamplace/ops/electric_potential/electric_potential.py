@@ -181,7 +181,10 @@ class ElectricPotentialFunction(Function):
         # it takes around 80% of the computation time
         # so I will not always evaluate it
         if fast_mode:  # dummy for invoking backward propagation
-            energy = torch.zeros(1, dtype=pos.dtype, device=pos.device)
+            # The precomputed inverse-frequency map already owns a persistent
+            # zero at DC. Reuse its scalar view instead of allocating and
+            # clearing a new one-element CUDA tensor every iteration.
+            energy = inv_wu2_plus_wv2[0, 0].view(1)
         else:
             # compute potential phi
             # auv / (wu**2 + wv**2)
