@@ -590,7 +590,7 @@ class PlaceObj(nn.Module):
             node_size_y=data_collections.node_size_y,
             bin_center_x=data_collections.bin_center_x_padded(placedb, 0, num_bins_x),
             bin_center_y=data_collections.bin_center_y_padded(placedb, 0, num_bins_y),
-            target_density=data_collections.target_density,
+            target_density=data_collections.target_density.item(),
             xl=placedb.xl,
             yl=placedb.yl,
             xh=placedb.xh,
