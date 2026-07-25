@@ -1100,7 +1100,9 @@ void global_swap(DetailedPlaceDB<T>& db, SwapState<T>& state)
 #ifdef TIMER
     timer_start = CPUTimer::getGlobaltime();
 #endif
-    reduce_min_2d_cub<T, 256><<<idx_end - idx_bgn, 256>>>(
+    constexpr int reduce_threads = 128;
+    reduce_min_2d_cub<T, reduce_threads>
+        <<<idx_end - idx_bgn, reduce_threads>>>(
         state.candidates, state.max_num_candidates);
 #ifdef TIMER
     checkCUDA(cudaDeviceSynchronize());
