@@ -967,7 +967,7 @@ class PlaceObj(nn.Module):
         else:
             overflow_avg = overflow
         coef = torch.pow(10, (overflow_avg - 0.1) * 20 / 9 - 1)
-        self.gamma.data.fill_((base_gamma * coef).item())
+        torch.mul(coef, base_gamma, out=self.gamma.data)
         return True
 
     def build_noise(self, params, placedb, data_collections):
