@@ -14,16 +14,17 @@ DREAMPLACE_BEGIN_NAMESPACE
 
 template <typename T>
 __global__ void computeWeightedAverageWirelength(
-    const T *x, const T *y,
-    const int *flat_netpin,
-    const int *netpin_start,
-    const unsigned char *net_mask,
+    const T *__restrict__ x, const T *__restrict__ y,
+    const int *__restrict__ flat_netpin,
+    const int *__restrict__ netpin_start,
+    const unsigned char *__restrict__ net_mask,
     int num_nets,
-    const T *inv_gamma,
-    const T *net_weights,
+    const T *__restrict__ inv_gamma,
+    const T *__restrict__ net_weights,
     bool has_net_weights,
-    T *partial_wl,
-    T *grad_intermediate_x, T *grad_intermediate_y)
+    T *__restrict__ partial_wl,
+    T *__restrict__ grad_intermediate_x,
+    T *__restrict__ grad_intermediate_y)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     int ii = i >> 1;
