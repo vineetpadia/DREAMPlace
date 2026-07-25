@@ -9,6 +9,7 @@ DREAMPLACE_BEGIN_NAMESPACE
 template <typename T>
 __global__ void computeHPWL(
         const T* x,
+        const T* y,
         const int* flat_netpin,
         const int* netpin_start,
         const unsigned char* net_mask,
@@ -21,19 +22,26 @@ __global__ void computeHPWL(
     {
         T max_x = -FLT_MAX;
         T min_x = FLT_MAX;
+        T max_y = -FLT_MAX;
+        T min_y = FLT_MAX;
 
         if (net_mask[i])
         {
             for (int j = netpin_start[i]; j < netpin_start[i+1]; ++j)
             {
-                min_x = min(min_x, x[flat_netpin[j]]);
-                max_x = max(max_x, x[flat_netpin[j]]);
+                int pin_id = flat_netpin[j];
+                min_x = min(min_x, x[pin_id]);
+                max_x = max(max_x, x[pin_id]);
+                min_y = min(min_y, y[pin_id]);
+                max_y = max(max_y, y[pin_id]);
             }
-            partial_hpwl[i] = max_x-min_x;
+            partial_hpwl[i] = max_x - min_x;
+            partial_hpwl[num_nets + i] = max_y - min_y;
         }
         else
         {
             partial_hpwl[i] = 0;
+            partial_hpwl[num_nets + i] = 0;
         }
     }
 }
@@ -51,42 +59,15 @@ int computeHPWLCudaLauncher(
     const int thread_count = 512;
     const int block_count_nets = (num_nets + thread_count - 1) / thread_count;
 
-    cudaError_t status;
-    cudaStream_t stream_y;
-    status = cudaStreamCreate(&stream_y);
-    if (status != cudaSuccess)
-    {
-        printf("cudaStreamCreate failed for stream_y\n");
-        fflush(stdout);
-        return 1;
-    }
-
-    computeHPWL<<<block_count_nets, thread_count>>>(
+    computeHPWL<<<block_count_nets, thread_count, 0, DREAMPLACE_STREAM>>>(
             x,
+            y,
             flat_netpin,
             netpin_start,
             net_mask,
             num_nets,
             partial_hpwl
             );
-
-    computeHPWL<<<block_count_nets, thread_count, 0, stream_y>>>(
-            y,
-            flat_netpin,
-            netpin_start,
-            net_mask,
-            num_nets,
-            partial_hpwl+num_nets
-            );
-
-    /* destroy stream */
-    status = cudaStreamDestroy(stream_y);
-    if (status != cudaSuccess)
-    {
-        printf("stream_y destroy failed\n");
-        fflush(stdout);
-        return 1;
-    }
 
     //printArray(partial_hpwl, num_nets, "partial_hpwl");
 
