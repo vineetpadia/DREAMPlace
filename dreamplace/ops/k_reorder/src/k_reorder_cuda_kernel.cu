@@ -310,99 +310,106 @@ __global__ void compute_instance_net_boxes(DetailedPlaceDBType db,
 }
 
 template <typename DetailedPlaceDBType, typename StateType>
+inline __device__ typename DetailedPlaceDBType::type compute_reorder_cost(
+    DetailedPlaceDBType db, StateType state, int group_id, int inst_id,
+    int permute_id, int offset) {
+  using T = typename DetailedPlaceDBType::type;
+  typename DetailedPlaceDBType::type target_x[MAX_K];
+  typename DetailedPlaceDBType::type target_sizes[MAX_K];
+  // this is a copy
+  auto inst = state.reorder_instances(group_id, inst_id);
+  inst.idx_bgn += offset;
+  inst.idx_end =
+      min(inst.idx_end + offset, state.row2node_map.size(inst.row_id));
+  auto row2nodes = state.row2node_map(inst.row_id) + inst.idx_bgn;
+  auto permutation = state.permutations + permute_id * state.K;
+  int K = inst.idx_end - inst.idx_bgn;
+
+  // after adding offset
+  for (int idx = 0; idx < K; ++idx) {
+    int node_id = row2nodes[idx];
+    if (node_id >= db.num_movable_nodes ||
+        db.node_size_y[node_id] > db.row_height) {
+      inst.idx_end = inst.idx_bgn + idx;
+      K = idx;
+      break;
+    }
+  }
+
+  int valid_flag = (K > 0);
+  for (int idx = 0; idx < K; ++idx) {
+    if (permutation[idx] >= K) {
+      valid_flag = 0;
+      break;
+    }
+  }
+
+  T cost = DREAMPLACE_CUDA_NAMESPACE::numeric_limits<T>::max();
+  if (valid_flag) {
+    compute_position(db, state, inst, permute_id, target_x, target_sizes);
+
+    // state.costs[i] = compute_instance_hpwl(
+    //        db,
+    //        state,
+    //        inst,
+    //        permute_id,
+    //        row2nodes,
+    //        K,
+    //        target_x,
+    //        target_sizes
+    //        );
+
+    cost = 0;
+    // consider FENCE region
+    if (db.num_regions) {
+      for (int idx = 0; idx < K; ++idx) {
+        int node_id = row2nodes[idx];
+        int permuted_offset = permutation[idx];
+        T node_xl = target_x[permuted_offset];
+        T node_yl = db.y[node_id];
+        if (!db.inside_fence(node_id, node_xl, node_yl)) {
+          cost = DREAMPLACE_CUDA_NAMESPACE::numeric_limits<T>::max();
+          break;
+        }
+      }
+    }
+    if (cost == 0) {
+      auto instance_nets =
+          state.instance_nets + inst_id * MAX_NUM_NETS_PER_INSTANCE;
+      auto const& instance_nets_size = state.instance_nets_size[inst_id];
+      for (int idx = 0; idx < instance_nets_size; ++idx) {
+        auto& instance_net = instance_nets[idx];
+        T bxl = instance_net.bxl;
+        T bxh = instance_net.bxh;
+
+        for (int j = 0; j < K; ++j) {
+          int flag = (1 << j);
+          if ((instance_net.node_marker & flag)) {
+            int permuted_offset = permutation[j];
+            T other_node_xl = target_x[permuted_offset];
+            other_node_xl += instance_net.pin_offset_x[j];
+            bxl = min(bxl, other_node_xl);
+            bxh = max(bxh, other_node_xl);
+          }
+        }
+        cost += bxh - bxl;
+      }
+    }
+  }
+  return cost;
+}
+
+template <typename DetailedPlaceDBType, typename StateType>
 __global__ void compute_reorder_hpwl(DetailedPlaceDBType db, StateType state,
                                      int group_id,
                                      int group_size_with_permutation,
                                      int offset) {
-  typedef typename DetailedPlaceDBType::type T;
-
-  typename DetailedPlaceDBType::type target_x[MAX_K];
-  typename DetailedPlaceDBType::type target_sizes[MAX_K];
   for (int i = blockIdx.x * blockDim.x + threadIdx.x;
        i < group_size_with_permutation; i += blockDim.x * gridDim.x) {
     int inst_id = i / state.num_permutations;
     int permute_id = i - inst_id * state.num_permutations;
-    // this is a copy
-    auto inst = state.reorder_instances(group_id, inst_id);
-    inst.idx_bgn += offset;
-    inst.idx_end =
-        min(inst.idx_end + offset, state.row2node_map.size(inst.row_id));
-    auto row2nodes = state.row2node_map(inst.row_id) + inst.idx_bgn;
-    auto permutation = state.permutations + permute_id * state.K;
-    int K = inst.idx_end - inst.idx_bgn;
-
-    // after adding offset
-    for (int idx = 0; idx < K; ++idx) {
-      int node_id = row2nodes[idx];
-      if (node_id >= db.num_movable_nodes ||
-          db.node_size_y[node_id] > db.row_height) {
-        inst.idx_end = inst.idx_bgn + idx;
-        K = idx;
-        break;
-      }
-    }
-
-    int valid_flag = (K > 0);
-    for (int idx = 0; idx < K; ++idx) {
-      if (permutation[idx] >= K) {
-        valid_flag = 0;
-        break;
-      }
-    }
-
-    T cost = DREAMPLACE_CUDA_NAMESPACE::numeric_limits<T>::max();
-    if (valid_flag) {
-      compute_position(db, state, inst, permute_id, target_x, target_sizes);
-
-      // state.costs[i] = compute_instance_hpwl(
-      //        db,
-      //        state,
-      //        inst,
-      //        permute_id,
-      //        row2nodes,
-      //        K,
-      //        target_x,
-      //        target_sizes
-      //        );
-
-      cost = 0;
-      // consider FENCE region
-      if (db.num_regions) {
-        for (int idx = 0; idx < K; ++idx) {
-          int node_id = row2nodes[idx];
-          int permuted_offset = permutation[idx];
-          T node_xl = target_x[permuted_offset];
-          T node_yl = db.y[node_id];
-          if (!db.inside_fence(node_id, node_xl, node_yl)) {
-            cost = DREAMPLACE_CUDA_NAMESPACE::numeric_limits<T>::max();
-            break;
-          }
-        }
-      }
-      if (cost == 0) {
-        auto instance_nets =
-            state.instance_nets + inst_id * MAX_NUM_NETS_PER_INSTANCE;
-        auto const& instance_nets_size = state.instance_nets_size[inst_id];
-        for (int idx = 0; idx < instance_nets_size; ++idx) {
-          auto& instance_net = instance_nets[idx];
-          T bxl = instance_net.bxl;
-          T bxh = instance_net.bxh;
-
-          for (int j = 0; j < K; ++j) {
-            int flag = (1 << j);
-            if ((instance_net.node_marker & flag)) {
-              int permuted_offset = permutation[j];
-              T other_node_xl = target_x[permuted_offset];
-              other_node_xl += instance_net.pin_offset_x[j];
-              bxl = min(bxl, other_node_xl);
-              bxh = max(bxh, other_node_xl);
-            }
-          }
-          cost += bxh - bxl;
-        }
-      }
-    }
-    state.costs[i] = cost;
+    state.costs[i] = compute_reorder_cost(
+        db, state, group_id, inst_id, permute_id, offset);
   }
 }
 
@@ -472,6 +479,44 @@ inline __device__ void apply_reorder_instance(
     for (int i = 0; i < K; ++i) {
       row2nodes[permutation[i]] = target_nodes[i];
     }
+  }
+}
+
+template <
+    typename T,
+    int ThreadsPerBlock,
+    typename DetailedPlaceDBType,
+    typename StateType>
+__global__ void compute_reorder_hpwl_reduce_and_apply(
+    DetailedPlaceDBType db, StateType state, int group_id,
+    int group_size, int offset) {
+  typedef cub::BlockReduce<ItemWithIndex<T>, ThreadsPerBlock> BlockReduce;
+  __shared__ typename BlockReduce::TempStorage temp_storage;
+
+  int inst_id = blockIdx.x;
+  if (inst_id >= group_size) {
+    return;
+  }
+  ItemWithIndex<T> thread_data;
+  thread_data.value = DREAMPLACE_CUDA_NAMESPACE::numeric_limits<T>::max();
+  thread_data.index = 0;
+  for (int col = threadIdx.x; col < state.num_permutations;
+       col += ThreadsPerBlock) {
+    T cost =
+        compute_reorder_cost(db, state, group_id, inst_id, col, offset);
+    if (cost < thread_data.value) {
+      thread_data.value = cost;
+      thread_data.index = col;
+    }
+  }
+
+  ItemWithIndex<T> aggregate =
+      BlockReduce(temp_storage).Reduce(
+          thread_data, ReduceMinOP<T>(), state.num_permutations);
+
+  if (threadIdx.x == 0) {
+    apply_reorder_instance(
+        db, state, group_id, inst_id, aggregate.index, offset);
   }
 }
 
@@ -1011,12 +1056,6 @@ void k_reorder(
             net_box_threads>>>(
             db, state, group_id, group_size, offset, instance_token_bgn);
         // print_instance_net_bboxes<<<1, 1>>>(state, group_id, offset);
-        constexpr int reorder_hpwl_threads = 128;
-        compute_reorder_hpwl<<<
-            ceilDiv(group_size * state.num_permutations,
-                    reorder_hpwl_threads),
-            reorder_hpwl_threads>>>(
-            db, state, group_id, group_size * state.num_permutations, offset);
 #ifdef K_REORDER_PROFILE
         checkCUDA(cudaDeviceSynchronize());
         timer_stop = TIMER::getGlobaltime();
@@ -1028,7 +1067,7 @@ void k_reorder(
         timer_start = TIMER::getGlobaltime();
 #endif
         // print_costs<<<1, 1>>>(state, group_id, offset);
-        reduce_min_and_apply_reorder<T, 32>
+        compute_reorder_hpwl_reduce_and_apply<T, 32>
             <<<group_size, 32>>>(
                 db, state, group_id, group_size, offset);
 #ifdef K_REORDER_PROFILE
