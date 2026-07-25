@@ -74,7 +74,22 @@ class PreconditionOp:
             # The preconditioning step in python is time-consuming, as in each gradient
             # pass, the total net weight should be re-calculated.
             sum_pin_weights_in_nodes = self.op_collections.pws_op(self.data_collections.net_weights)
-            if density_weight.size(0) == 1:
+            use_fused_preconditioner = (
+                density_weight.size(0) == 1
+                and grad.is_cuda
+                and update_mask is None
+                and fix_nodes_mask is None
+                and hasattr(self.op_collections.pws_op, "precondition")
+            )
+            if use_fused_preconditioner:
+                self.op_collections.pws_op.precondition(
+                    grad,
+                    sum_pin_weights_in_nodes,
+                    self.data_collections.node_areas,
+                    density_weight,
+                    self.alpha,
+                )
+            elif density_weight.size(0) == 1:
                 precond = (sum_pin_weights_in_nodes
                     + self.alpha * density_weight * self.data_collections.node_areas
                 )
@@ -98,9 +113,10 @@ class PreconditionOp:
                 ] *= density_weight[-1]
                 precond = sum_pin_weights_in_nodes + self.alpha * node_areas
 
-            precond.clamp_(min=1.0)
-            grad[0 : self.placedb.num_nodes].div_(precond)
-            grad[self.placedb.num_nodes : self.placedb.num_nodes * 2].div_(precond)
+            if not use_fused_preconditioner:
+                precond.clamp_(min=1.0)
+                grad[0 : self.placedb.num_nodes].div_(precond)
+                grad[self.placedb.num_nodes : self.placedb.num_nodes * 2].div_(precond)
 
             ### stop gradients for terminated electric field
             if update_mask is not None:
@@ -1179,6 +1195,4 @@ class PlaceObj(nn.Module):
 
         self.op_collections.fence_region_density_overflow_merged_op = merged_density_overflow_op
         return self.op_collections.fence_region_density_ops, self.op_collections.fence_region_density_merged_op, self.op_collections.fence_region_density_overflow_merged_op
-
-
 

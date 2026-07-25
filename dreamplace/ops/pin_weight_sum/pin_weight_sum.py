@@ -71,6 +71,15 @@ class PinWeightSum(nn.Module):
         self._cache_key = None
         self._cache_value = None
 
+    def precondition(
+        self, grad, node_weights, node_areas, density_weight, alpha
+    ):
+        """Apply the common single-density gradient preconditioner."""
+        pws_cuda.precondition(
+            grad, node_weights, node_areas, density_weight, alpha
+        )
+        return grad
+
     def forward(self, net_weights):
         if self.algorithm == 'node-by-node':
             # Net weights are constant for non-timing-driven placement, yet this sum is
