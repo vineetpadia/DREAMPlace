@@ -142,12 +142,8 @@ __global__ void kmeans_find_centers_kernel(DetailedPlaceDBType db, IndependentSe
         assert(thread_data.index < kmeans_state.num_seeds);
     }
 
-    __syncthreads(); 
-
-    // Compute the block-wide max for thread0
+    // Compute the block-wide minimum for thread0
     ItemWithIndex<typename DetailedPlaceDBType::type> aggregate = BlockReduce(temp_storage).Reduce(thread_data, ReduceMinOP<typename DetailedPlaceDBType::type>(), kmeans_state.num_seeds);
-
-    __syncthreads(); 
 
     if (threadIdx.x == 0)
     {
