@@ -398,8 +398,12 @@ class NonLinearPlace(BasicPlace.BasicPlace):
                     metrics.append(cur_metric)
                     pos = model.data_collections.pos[0]
 
-                    # move any out-of-bound cell back to placement region
-                    self.op_collections.move_boundary_op(pos)
+                    # A Nesterov step already clamps the accepted reference
+                    # position. Only a newly constructed optimizer needs the
+                    # same projection again before its first evaluation.
+                    if (optimizer_name.lower() != "nesterov"
+                            or optimizer.param_groups[0]["obj_eval_count"] == 0):
+                        self.op_collections.move_boundary_op(pos)
 
                     # handle multiple density weights for multi-electric field
                     if not density_weight_initialized:
