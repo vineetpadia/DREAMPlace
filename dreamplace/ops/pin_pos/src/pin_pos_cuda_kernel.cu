@@ -31,7 +31,7 @@ int computePinPosCudaLauncher(
 	const T* x, const T* y,
 	const T* pin_offset_x,
 	const T* pin_offset_y,
-	const long* pin2node_map,
+	const int* pin2node_map,
 	const int* flat_node2pin_map,
 	const int* flat_node2pin_start_map,
 	int num_pins,
@@ -51,8 +51,9 @@ __global__ void computeNodeGrad(
 	const T* grad_out_x,
 	const T* grad_out_y,
 	const int* flat_node2pin_map,
-    const int* flat_node2pin_start_map, 
-    const int num_nodes, 
+    const int* flat_node2pin_start_map,
+    const int num_nodes,
+    const int num_physical_nodes,
 	T* grad_x,
 	T* grad_y
 	)
@@ -60,30 +61,30 @@ __global__ void computeNodeGrad(
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < num_nodes)
 	{
-        T& gx = grad_x[i];
-        T& gy = grad_y[i];
-        gx = 0; 
-        gy = 0; 
-        for (int j = flat_node2pin_start_map[i]; j < flat_node2pin_start_map[i+1]; ++j)
+        T gx = 0;
+        T gy = 0;
+        if (i < num_physical_nodes)
         {
-            int pin_id = flat_node2pin_map[j]; 
-            gx += grad_out_x[pin_id]; 
-            gy += grad_out_y[pin_id]; 
+            for (int j = flat_node2pin_start_map[i];
+                 j < flat_node2pin_start_map[i + 1]; ++j)
+            {
+                int pin_id = flat_node2pin_map[j];
+                gx += grad_out_x[pin_id];
+                gy += grad_out_y[pin_id];
+            }
         }
+        grad_x[i] = gx;
+        grad_y[i] = gy;
 	}
 }
 
 template <typename T>
 int computePinPosGradCudaLauncher(
 	const T* grad_out_x, const T* grad_out_y,
-	const T* x, const T* y,
-	const T* pin_offset_x,
-	const T* pin_offset_y,
-	const long* pin2node_map,
 	const int* flat_node2pin_map,
 	const int* flat_node2pin_start_map,
 	int num_nodes,
-	int num_pins,
+	int num_physical_nodes,
 	T* grad_x, T* grad_y
     )
 {
@@ -94,7 +95,8 @@ int computePinPosGradCudaLauncher(
             grad_out_y, 
             flat_node2pin_map, 
             flat_node2pin_start_map, 
-            num_nodes, 
+            num_nodes,
+            num_physical_nodes,
             grad_x, 
             grad_y
             );
@@ -108,7 +110,7 @@ int computePinPosGradCudaLauncher(
     	    const T* x, const T* y, \
     	    const T* pin_offset_x, \
 	        const T* pin_offset_y, \
-	        const long* pin2node_map, \
+	        const int* pin2node_map, \
 	        const int* flat_node2pin_map, \
 	        const int* flat_node2pin_start_map, \
 	        int num_pins, \
@@ -117,14 +119,10 @@ int computePinPosGradCudaLauncher(
     \
     template int computePinPosGradCudaLauncher<T>(\
         	const T* grad_out_x, const T* grad_out_y, \
-	        const T* x, const T* y, \
-	        const T* pin_offset_x, \
-	        const T* pin_offset_y, \
-	        const long* pin2node_map, \
 	        const int* flat_node2pin_map, \
 	        const int* flat_node2pin_start_map, \
 	        int num_nodes, \
-	        int num_pins, \
+	        int num_physical_nodes, \
 	        T* grad_x, T* grad_y \
             ); 
 

@@ -119,7 +119,7 @@ class PinPos(nn.Module):
         super(PinPos, self).__init__()
         self.pin_offset_x = pin_offset_x
         self.pin_offset_y = pin_offset_y
-        self.pin2node_map = pin2node_map.long()
+        self.pin2node_map = pin2node_map.int()
         self.flat_node2pin_map = flat_node2pin_map
         self.flat_node2pin_start_map = flat_node2pin_start_map
         self.num_physical_nodes = num_physical_nodes
