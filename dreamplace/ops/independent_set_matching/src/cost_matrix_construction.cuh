@@ -42,6 +42,16 @@ __global__ void compute_cost_matrix_kernel(DetailedPlaceDBType db, IndependentSe
     __shared__ typename DetailedPlaceDBType::type pin_offset_x[MAX_NODE_DEGREE];
     __shared__ typename DetailedPlaceDBType::type pin_offset_y[MAX_NODE_DEGREE];
     __shared__ unsigned char net_enabled[MAX_NODE_DEGREE];
+    int pos_id = independent_set[threadIdx.x];
+    typename DetailedPlaceDBType::type target_x_orig;
+    typename DetailedPlaceDBType::type target_y;
+    Space<typename DetailedPlaceDBType::type> target_space;
+    if (pos_id < db.num_movable_nodes)
+    {
+        target_x_orig = db.x[pos_id];
+        target_y = db.y[pos_id];
+        target_space = state.spaces[pos_id];
+    }
     int j_end = min(
         (blockIdx.x + 1) * kCostMatrixRowsPerBlock, state.set_size);
     for (int j = blockIdx.x * kCostMatrixRowsPerBlock; j < j_end; ++j)
@@ -143,16 +153,13 @@ __global__ void compute_cost_matrix_kernel(DetailedPlaceDBType db, IndependentSe
 
     for (int k = threadIdx.x; k < state.set_size; k += blockDim.x) // pos in set 
     {
-        int pos_id = independent_set[k]; 
         auto& cost = cost_matrix[k]; // row major 
         if (node_id < db.num_movable_nodes && pos_id < db.num_movable_nodes)
         {
 #ifdef DEBUG
             assert(db.node_size_x[node_id] == db.node_size_x[pos_id]);
 #endif
-            typename DetailedPlaceDBType::type target_x = db.x[pos_id]; 
-            typename DetailedPlaceDBType::type target_y = db.y[pos_id]; 
-            auto const& target_space = state.spaces[pos_id];
+            typename DetailedPlaceDBType::type target_x = target_x_orig;
             int target_hpwl = 0; 
             if (adjust_pos(target_x, node_width, target_space))
             {
