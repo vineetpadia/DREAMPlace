@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include "cuda_runtime.h"
 #include "utility/src/utils.cuh"
+#include "utility/src/utils_cub.cuh"
 // local dependency
 #include "electric_potential/src/density_function.h"
 
@@ -452,6 +453,19 @@ __device__ __forceinline__ double multiplyRound(double lhs, double rhs) {
   return __dmul_rn(lhs, rhs);
 }
 
+// Density is nonnegative, so IEEE-754 bit patterns preserve numeric ordering.
+__device__ __forceinline__ void atomicMaxPositive(
+    float *address, float value) {
+  atomicMax(reinterpret_cast<unsigned int *>(address), __float_as_uint(value));
+}
+
+__device__ __forceinline__ void atomicMaxPositive(
+    double *address, double value) {
+  atomicMax(
+      reinterpret_cast<unsigned long long int *>(address),
+      static_cast<unsigned long long int>(__double_as_longlong(value)));
+}
+
 template <typename T>
 __global__ void requantizeDensityMap(
     unsigned long long int *scaled_density_map_tensor,
@@ -466,17 +480,25 @@ __global__ void requantizeDensityMap(
   }
 }
 
-template <typename T>
-__global__ void copyScaleOverflowArray(
+template <typename T, int ThreadsPerBlock>
+__global__ void copyScaleOverflowMaxArray(
     T *density_map, T *overflow_map,
     const unsigned long long int *scaled_density_map, T inv_scale_factor,
-    T target_area, int num_bins) {
+    T target_area, int num_bins, T *max_density) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
+  T density = 0;
   if (i < num_bins) {
-    T density = static_cast<T>(scaled_density_map[i]) * inv_scale_factor;
+    density = static_cast<T>(scaled_density_map[i]) * inv_scale_factor;
     T overflow = density - target_area;
     density_map[i] = density;
     overflow_map[i] = overflow < T(0) ? T(0) : overflow;
+  }
+
+  using BlockReduce = cub::BlockReduce<T, ThreadsPerBlock>;
+  __shared__ typename BlockReduce::TempStorage temp_storage;
+  T block_max = BlockReduce(temp_storage).Reduce(density, cub::Max());
+  if (threadIdx.x == 0) {
+    atomicMaxPositive(max_density, block_max);
   }
 }
 
@@ -493,7 +515,8 @@ int computeTriangleDensityMapCudaLauncher(
     const int *sorted_node_map,
     unsigned long long int *deterministic_workspace,
     bool requantize_workspace, bool finalize_output,
-    T *overflow_map_tensor, T overflow_target_area) {
+    T *overflow_map_tensor, T overflow_target_area,
+    T *max_density_tensor) {
   if (deterministic_flag)  // deterministic implementation using unsigned long
                            // as fixed point number
   {
@@ -537,12 +560,13 @@ int computeTriangleDensityMapCudaLauncher(
         scaled_density_map_tensor, sorted_node_map);
     if (finalize_output) {
       if (overflow_map_tensor) {
-        copyScaleOverflowArray
-            <<<(num_bins + thread_count - 1) / thread_count,
-               thread_count, 0, DREAMPLACE_STREAM>>>(
+        constexpr int max_thread_count = 128;
+        copyScaleOverflowMaxArray<T, max_thread_count>
+            <<<(num_bins + max_thread_count - 1) / max_thread_count,
+               max_thread_count, 0, DREAMPLACE_STREAM>>>(
                 density_map_tensor, overflow_map_tensor,
                 scaled_density_map_tensor, T(1.0 / scale_factor),
-                overflow_target_area, num_bins);
+                overflow_target_area, num_bins, max_density_tensor);
       } else {
         copyScaleArray<<<(num_bins + thread_count - 1) / thread_count,
                          thread_count, 0, DREAMPLACE_STREAM>>>(
@@ -684,7 +708,7 @@ void densityOverflowMapCudaLauncher(
       const T *density_map_input_tensor, const int *sorted_node_map,            \
       unsigned long long int *deterministic_workspace,                          \
       bool requantize_workspace, bool finalize_output, T *overflow_map_tensor,  \
-      T overflow_target_area);                                                  \
+      T overflow_target_area, T *max_density_tensor);                           \
                                                                                \
   template int computeExactDensityMapCudaLauncher<T>(                          \
       const T *x_tensor, const T *y_tensor, const T *node_size_x_tensor,       \

@@ -7,6 +7,8 @@
  */
 #include "utility/src/torch.h"
 #include "utility/src/utils.h"
+#include <c10/cuda/CUDAStream.h>
+#include <cuda_runtime.h>
 
 DREAMPLACE_BEGIN_NAMESPACE
 
@@ -25,7 +27,8 @@ int computeTriangleDensityMapCudaLauncher(
     const int* sorted_node_map,
     unsigned long long int* deterministic_workspace,
     bool requantize_workspace, bool finalize_output,
-    T* overflow_map_tensor, T overflow_target_area);
+    T* overflow_map_tensor, T overflow_target_area,
+    T* max_density_tensor);
 
 // The exact density model
 // Compute the exact overlap area for density
@@ -102,6 +105,18 @@ std::vector<at::Tensor> density_map(
   bool compute_overflow = overflow_target_area >= 0;
   at::Tensor overflow_map =
       compute_overflow ? at::empty_like(density_map) : at::Tensor();
+  bool compute_fused_max =
+      compute_overflow && deterministic_flag && has_nodes;
+  at::Tensor max_density =
+      compute_fused_max ? at::empty({1}, density_map.options()) : at::Tensor();
+  if (compute_fused_max) {
+    cudaError_t status = cudaMemsetAsync(
+        max_density.data_ptr(), 0, max_density.nbytes(),
+        at::cuda::getCurrentCUDAStream());
+    TORCH_CHECK(
+        status == cudaSuccess, "failed to initialize fused density maximum: ",
+        cudaGetErrorString(status));
+  }
   int num_nodes = pos.numel() / 2;
 
   // Use the caching allocator once per density evaluation instead of
@@ -146,7 +161,10 @@ std::vector<at::Tensor> density_map(
             compute_overflow
                 ? DREAMPLACE_TENSOR_DATA_PTR(overflow_map, scalar_t)
                 : nullptr,
-            static_cast<scalar_t>(overflow_target_area));
+            static_cast<scalar_t>(overflow_target_area),
+            compute_fused_max
+                ? DREAMPLACE_TENSOR_DATA_PTR(max_density, scalar_t)
+                : nullptr);
       });
   }
 
@@ -181,7 +199,10 @@ std::vector<at::Tensor> density_map(
               compute_overflow
                   ? DREAMPLACE_TENSOR_DATA_PTR(overflow_map, scalar_t)
                   : nullptr,
-              static_cast<scalar_t>(overflow_target_area));
+              static_cast<scalar_t>(overflow_target_area),
+              compute_fused_max
+                  ? DREAMPLACE_TENSOR_DATA_PTR(max_density, scalar_t)
+                  : nullptr);
         });
   }
 
@@ -196,7 +217,7 @@ std::vector<at::Tensor> density_map(
         });
   }
 
-  return {density_map, overflow_map};
+  return {density_map, overflow_map, max_density};
 }
 
 /// @brief compute density map for fixed cells

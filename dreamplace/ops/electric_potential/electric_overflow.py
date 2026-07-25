@@ -99,6 +99,11 @@ class ElectricDensityMapFunction(Function):
                 overflow_target_area if fuse_overflow else -1.0)
             density_map = output[0].view([num_bins_x, num_bins_y])
             overflow_map = output[1] if fuse_overflow else None
+            max_density = (
+                output[2][0]
+                if fuse_overflow and output[2] is not None
+                else None
+            )
         else:
             density_map = electric_potential_cpp.density_map(
                 pos.view(pos.numel()), node_size_x_clamped,
@@ -110,6 +115,7 @@ class ElectricDensityMapFunction(Function):
                 num_filler_impacted_bins_x, num_filler_impacted_bins_y,
                 deterministic_flag).view([num_bins_x, num_bins_y])
             overflow_map = None
+            max_density = None
 
         # set padding density
         if padding > 0:
@@ -127,7 +133,7 @@ class ElectricDensityMapFunction(Function):
                     overflow_map = (
                         density_map - overflow_target_area
                     ).clamp_(min=0.0)
-            return density_map, overflow_map
+            return density_map, overflow_map, max_density
 
         return density_map
 
@@ -281,7 +287,11 @@ class ElectricOverflow(nn.Module):
 
         bin_area = self.bin_size_x * self.bin_size_y
         target_area = self.target_density * bin_area
-        density_map, overflow_map = ElectricDensityMapFunction.forward(
+        (
+            density_map,
+            overflow_map,
+            max_density,
+        ) = ElectricDensityMapFunction.forward(
             pos, self.node_size_x_clamped, self.node_size_y_clamped,
             self.offset_x, self.offset_y, self.ratio, self.bin_center_x,
             self.bin_center_y, self.initial_density_map, self.target_density,
@@ -293,8 +303,10 @@ class ElectricOverflow(nn.Module):
             self.deterministic_flag, self.sorted_node_map,
             overflow_target_area=target_area)
         density_cost = overflow_map.sum().unsqueeze(0)
+        if max_density is None:
+            max_density = density_map.max()
 
-        return density_cost, density_map.max().unsqueeze(0) / bin_area
+        return density_cost, max_density.unsqueeze(0) / bin_area
 
 
 def plot(plot_count, density_map, padding, name):

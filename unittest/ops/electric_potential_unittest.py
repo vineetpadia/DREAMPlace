@@ -175,6 +175,8 @@ class ElectricPotentialOpTest(unittest.TestCase):
         result.backward()
         grad = pos.grad.clone()
         print("custom_grad = ", grad)
+        overflow, max_density = custom.forward(
+            pos.detach(), mode="overflow")
 
         # test cuda
         if torch.cuda.device_count():
@@ -213,11 +215,20 @@ class ElectricPotentialOpTest(unittest.TestCase):
             result_cuda.backward()
             grad_cuda = pos.grad.clone()
             print("custom_grad_cuda = ", grad_cuda.data.cpu())
+            custom_cuda.deterministic_flag = True
+            overflow_cuda, max_density_cuda = custom_cuda.forward(
+                pos.detach(), mode="overflow")
 
             np.testing.assert_allclose(result.detach().numpy(),
                                        result_cuda.data.cpu().detach().numpy())
             np.testing.assert_allclose(grad.detach().numpy(),
                                        grad_cuda.data.cpu().detach().numpy())
+            np.testing.assert_allclose(
+                overflow.detach().numpy(),
+                overflow_cuda.data.cpu().detach().numpy())
+            np.testing.assert_allclose(
+                max_density.detach().numpy(),
+                max_density_cuda.data.cpu().detach().numpy())
 
 
 def plot(plot_count, density_map, padding, name):

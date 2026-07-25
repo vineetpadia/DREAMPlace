@@ -549,7 +549,11 @@ class ElectricPotential(ElectricOverflow):
             ### num_filler_nodes is set 0
             bin_area = self.bin_size_x * self.bin_size_y
             target_area = self.target_density * bin_area
-            density_map, overflow_map = ElectricDensityMapFunction.forward(
+            (
+                density_map,
+                overflow_map,
+                max_density,
+            ) = ElectricDensityMapFunction.forward(
                 pos, self.node_size_x_clamped, self.node_size_y_clamped,
                 self.offset_x, self.offset_y, self.ratio, self.bin_center_x,
                 self.bin_center_y, self.initial_density_map, self.target_density,
@@ -561,5 +565,7 @@ class ElectricPotential(ElectricOverflow):
                 self.deterministic_flag, self.sorted_node_map,
                 overflow_target_area=target_area)
             density_cost = overflow_map.sum()
+            if max_density is None:
+                max_density = density_map.max()
 
-            return density_cost, density_map.max() / bin_area
+            return density_cost, max_density / bin_area
