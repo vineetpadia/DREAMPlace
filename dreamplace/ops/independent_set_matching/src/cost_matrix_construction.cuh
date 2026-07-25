@@ -40,50 +40,53 @@ __global__ void compute_cost_matrix_kernel(DetailedPlaceDBType db, IndependentSe
     int j = blockIdx.x; // node in set 
     const int* __restrict__ independent_set = state.independent_sets + i*state.set_size; 
     auto cost_matrix = state.cost_matrices + i*state.cost_matrix_size + j*state.set_size; 
-    __shared__ int node_id; 
-    __shared__ typename DetailedPlaceDBType::type node_width; 
     __shared__ DreamPlace::Utility::SharedBox<typename DetailedPlaceDBType::type> net_boxes[MAX_NODE_DEGREE]; 
-    __shared__ int node2pin_id_bgn; 
-    __shared__ int node2pin_id_end; 
-    if (threadIdx.x == 0)
+    int node_id = independent_set[j];
+    typename DetailedPlaceDBType::type node_width =
+        DREAMPLACE_CUDA_NAMESPACE::numeric_limits<
+            typename DetailedPlaceDBType::type>::max();
+    int node2pin_id_bgn = 0;
+    int node2pin_id_end = 0;
+    if (node_id < db.num_movable_nodes)
     {
-        node_id = independent_set[j];
-        node_width = DREAMPLACE_CUDA_NAMESPACE::numeric_limits<typename DetailedPlaceDBType::type>::max();
-        if (node_id < db.num_movable_nodes)
+        node_width = db.node_size_x[node_id];
+
+        node2pin_id_bgn = db.flat_node2pin_start_map[node_id];
+        node2pin_id_end = db.flat_node2pin_start_map[node_id+1];
+        node2pin_id_end = min(
+            node2pin_id_bgn+MAX_NODE_DEGREE, node2pin_id_end);
+
+        for (int node2pin_id = node2pin_id_bgn + threadIdx.x;
+             node2pin_id < node2pin_id_end;
+             node2pin_id += blockDim.x)
         {
-            node_width = db.node_size_x[node_id];
-
-            node2pin_id_bgn = db.flat_node2pin_start_map[node_id];
-            node2pin_id_end = db.flat_node2pin_start_map[node_id+1];
-            node2pin_id_end = min(node2pin_id_bgn+MAX_NODE_DEGREE, node2pin_id_end);
-
-            int idx = 0; 
-            for (int node2pin_id = node2pin_id_bgn; node2pin_id < node2pin_id_end; ++node2pin_id, ++idx)
+            int idx = node2pin_id - node2pin_id_bgn;
+            int node_pin_id = db.flat_node2pin_map[node2pin_id];
+            int net_id = db.pin2net_map[node_pin_id];
+            auto& box = net_boxes[idx];
+            box.xl = db.xh;
+            box.yl = db.yh;
+            box.xh = db.xl;
+            box.yh = db.yl;
+            if (db.net_mask[net_id])
             {
-                int node_pin_id = db.flat_node2pin_map[node2pin_id];
-                int net_id = db.pin2net_map[node_pin_id];
-                auto& box = net_boxes[idx];
-                box.xl = db.xh;
-                box.yl = db.yh;
-                box.xh = db.xl;
-                box.yh = db.yl;
-                if (db.net_mask[net_id])
+                int net2pin_id_bgn = db.flat_net2pin_start_map[net_id];
+                int net2pin_id_end = db.flat_net2pin_start_map[net_id+1];
+                for (int net2pin_id = net2pin_id_bgn;
+                     net2pin_id < net2pin_id_end; ++net2pin_id)
                 {
-                    int net2pin_id_bgn = db.flat_net2pin_start_map[net_id];
-                    int net2pin_id_end = db.flat_net2pin_start_map[net_id+1];
-                    for (int net2pin_id = net2pin_id_bgn; net2pin_id < net2pin_id_end; ++net2pin_id)
+                    int net_pin_id = db.flat_net2pin_map[net2pin_id];
+                    int other_node_id = db.pin2node_map[net_pin_id];
+                    if (other_node_id != node_id)
                     {
-                        int net_pin_id = db.flat_net2pin_map[net2pin_id];
-                        int other_node_id = db.pin2node_map[net_pin_id];
-                        if (other_node_id != node_id)
-                        {
-                            typename DetailedPlaceDBType::type xxl = db.x[other_node_id]+db.pin_offset_x[net_pin_id];
-                            typename DetailedPlaceDBType::type yyl = db.y[other_node_id]+db.pin_offset_y[net_pin_id];
-                            box.xl = min(box.xl, xxl);
-                            box.xh = max(box.xh, xxl);
-                            box.yl = min(box.yl, yyl);
-                            box.yh = max(box.yh, yyl);
-                        }
+                        typename DetailedPlaceDBType::type xxl =
+                            db.x[other_node_id]+db.pin_offset_x[net_pin_id];
+                        typename DetailedPlaceDBType::type yyl =
+                            db.y[other_node_id]+db.pin_offset_y[net_pin_id];
+                        box.xl = min(box.xl, xxl);
+                        box.xh = max(box.xh, xxl);
+                        box.yl = min(box.yl, yyl);
+                        box.yh = max(box.yh, yyl);
                     }
                 }
             }
