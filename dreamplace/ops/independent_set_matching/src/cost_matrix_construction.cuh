@@ -312,7 +312,7 @@ void cost_matrix_construction(const DetailedPlaceDBType& db, IndependentSetMatch
     //print_cost_matrix_kernel<<<1, 1>>>(state.cost_matrices + state.cost_matrix_size*3, state.set_size);
 #endif
 
-    constexpr int threads = 256;
+    constexpr int threads = 512;
     reduce_cost_matrix_max_kernel<
         typename IndependentSetMatchingStateType::cost_type, threads>
         <<<state.num_independent_sets, threads>>>(
