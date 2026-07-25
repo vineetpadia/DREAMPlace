@@ -132,14 +132,10 @@ __global__ void reduce_min_2d_cub(SwapCandidate<T>* candidates,
     }
   }
 
-  __syncthreads();
-
-  // Compute the block-wide max for thread0
+  // Compute the block-wide minimum for thread 0.
   ItemWithIndex<T> aggregate =
       BlockReduce(temp_storage)
           .Reduce(thread_data, ReduceMinOP<T>(), max_num_elements);
-
-  __syncthreads();
 
   if (threadIdx.x == 0) {
     row_candidates[0] = row_candidates[aggregate.index];
