@@ -157,10 +157,15 @@ class ElectricPotentialFunction(Function):
             wv_by_wu2_plus_wv2_half = wv.mul(inv_wu2_plus_wv2).mul_(1. / 2)
 
         # compute auv
-        density_map.mul_(1.0 / (ctx.bin_size_x * ctx.bin_size_y))
-
         #auv = discrete_spectral_transform.dct2_2N(density_map, expk0=exact_expkM, expk1=exact_expkN)
-        auv = dct2.forward(density_map)
+        density_scale = 1.0 / (ctx.bin_size_x * ctx.bin_size_y)
+        if fast_mode:
+            # The density map is not consumed again in fast mode, so apply its
+            # scale while the DCT preprocess is already reading every bin.
+            auv = dct2.forward(density_map, density_scale)
+        else:
+            density_map.mul_(density_scale)
+            auv = dct2.forward(density_map)
 
         # compute field xi
         # Apply each spectral weight while preprocessing its inverse transform

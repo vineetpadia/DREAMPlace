@@ -11,8 +11,9 @@
 
 DREAMPLACE_BEGIN_NAMESPACE
 
-void dct2_fft2_forward(at::Tensor x, at::Tensor expkM, at::Tensor expkN,
-                       at::Tensor out, at::Tensor buf) {
+void dct2_fft2_forward_impl(at::Tensor x, double input_scale,
+                            at::Tensor expkM, at::Tensor expkN,
+                            at::Tensor out, at::Tensor buf) {
   CHECK_CUDA(x);
   CHECK_CUDA(expkM);
   CHECK_CUDA(expkN);
@@ -31,7 +32,8 @@ void dct2_fft2_forward(at::Tensor x, at::Tensor expkM, at::Tensor expkN,
   DREAMPLACE_DISPATCH_FLOATING_TYPES(x, "dct2_fft2_forward", [&] {
     dct2dPreprocessCudaLauncher<scalar_t>(
         DREAMPLACE_TENSOR_DATA_PTR(x, scalar_t),
-        DREAMPLACE_TENSOR_DATA_PTR(out, scalar_t), M, N);
+        DREAMPLACE_TENSOR_DATA_PTR(out, scalar_t), M, N,
+        static_cast<scalar_t>(input_scale));
 
 #if TORCH_VERSION_MAJOR > 1 || \
     (TORCH_VERSION_MAJOR == 1 && TORCH_VERSION_MINOR >= 8)
@@ -50,6 +52,17 @@ void dct2_fft2_forward(at::Tensor x, at::Tensor expkM, at::Tensor expkN,
         DREAMPLACE_TENSOR_DATA_PTR(expkM, scalar_t),
         DREAMPLACE_TENSOR_DATA_PTR(expkN, scalar_t));
   });
+}
+
+void dct2_fft2_forward(at::Tensor x, at::Tensor expkM, at::Tensor expkN,
+                       at::Tensor out, at::Tensor buf) {
+  dct2_fft2_forward_impl(x, 1.0, expkM, expkN, out, buf);
+}
+
+void dct2_fft2_scaled_forward(at::Tensor x, double scale, at::Tensor expkM,
+                              at::Tensor expkN, at::Tensor out,
+                              at::Tensor buf) {
+  dct2_fft2_forward_impl(x, scale, expkM, expkN, out, buf);
 }
 
 void idct2_fft2_forward(at::Tensor x, at::Tensor expkM, at::Tensor expkN,
@@ -227,6 +240,9 @@ DREAMPLACE_END_NAMESPACE
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("dct2_fft2", &DREAMPLACE_NAMESPACE::dct2_fft2_forward,
         "DCT2 FFT2D (CUDA)");
+  m.def("dct2_fft2_scaled",
+        &DREAMPLACE_NAMESPACE::dct2_fft2_scaled_forward,
+        "Scaled DCT2 FFT2D (CUDA)");
   m.def("idct2_fft2", &DREAMPLACE_NAMESPACE::idct2_fft2_forward,
         "IDCT2 FFT2D (CUDA)");
   m.def("idct_idxst", &DREAMPLACE_NAMESPACE::idct_idxst_forward,

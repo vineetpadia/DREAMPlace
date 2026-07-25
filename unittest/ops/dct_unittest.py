@@ -792,6 +792,21 @@ class DXTOpTest(unittest.TestCase):
                     result = transform(expkM, expkN)(x, weight)
                     self.assertTrue(torch.equal(result, reference))
 
+    @unittest.skipUnless(torch.cuda.device_count(), "CUDA is required")
+    def test_scaled_dct2(self):
+        torch.manual_seed(23)
+        scale = 0.03719471
+        for test_dtype in (torch.float32, torch.float64):
+            x = torch.randn(
+                64, 128, dtype=test_dtype, device="cuda")
+            expkM = discrete_spectral_transform.get_exact_expk(
+                x.size(0), dtype=test_dtype, device=x.device)
+            expkN = discrete_spectral_transform.get_exact_expk(
+                x.size(1), dtype=test_dtype, device=x.device)
+            reference = dct2_fft2.DCT2(expkM, expkN)(x.mul(scale))
+            result = dct2_fft2.DCT2(expkM, expkN)(x, scale)
+            self.assertTrue(torch.equal(result, reference))
+
 
 def eval_torch_rfft1d(x, runs):
     for i in range(100):

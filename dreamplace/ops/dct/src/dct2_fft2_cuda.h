@@ -18,9 +18,13 @@ DREAMPLACE_BEGIN_NAMESPACE
 // dct2_fft2
 void dct2_fft2_forward(at::Tensor x, at::Tensor expkM, at::Tensor expkN,
                        at::Tensor out, at::Tensor buf);
+void dct2_fft2_scaled_forward(at::Tensor x, double scale, at::Tensor expkM,
+                              at::Tensor expkN, at::Tensor out,
+                              at::Tensor buf);
 
 template <typename T>
-void dct2dPreprocessCudaLauncher(const T *x, T *y, const int M, const int N);
+void dct2dPreprocessCudaLauncher(const T *x, T *y, const int M, const int N,
+                                 const T input_scale);
 
 template <typename T>
 void dct2dPostprocessCudaLauncher(const T *x, T *y, const int M, const int N,

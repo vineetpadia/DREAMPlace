@@ -37,7 +37,7 @@ class DCT2(nn.Module):
         self.out = None
         self.buf = None
 
-    def forward(self, x):
+    def forward(self, x, scale=None):
         M = x.size(-2)
         N = x.size(-1)
         if self.expkM is None or self.expkM.size(-2) != M or self.expkM.dtype != x.dtype:
@@ -47,6 +47,13 @@ class DCT2(nn.Module):
         if self.out is None:
             self.out = torch.empty(M, N, dtype=x.dtype, device=x.device)
             self.buf = torch.empty(M, N // 2 + 1, 2, dtype=x.dtype, device=x.device)
+
+        if scale is not None:
+            if x.is_cuda:
+                dct2_fft2_cuda.dct2_fft2_scaled(
+                    x, scale, self.expkM, self.expkN, self.out, self.buf)
+                return self.out
+            x = x.mul(scale)
 
         return DCT2Function.apply(x, self.expkM, self.expkN, self.out, self.buf)
 

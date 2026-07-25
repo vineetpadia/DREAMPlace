@@ -23,9 +23,19 @@ inline __device__ int INDEX(const int hid, const int wid, const int N)
     return (hid * N + wid);
 }
 
+__device__ __forceinline__ float dctMultiplyRound(float lhs, float rhs)
+{
+    return __fmul_rn(lhs, rhs);
+}
+
+__device__ __forceinline__ double dctMultiplyRound(double lhs, double rhs)
+{
+    return __dmul_rn(lhs, rhs);
+}
+
 // dct2_fft2
 template <typename T>
-__global__ void dct2dPreprocess(const T *x, T *y, const int M, const int N, const int halfN)
+__global__ void dct2dPreprocess(const T *x, T *y, const int M, const int N, const int halfN, const T input_scale)
 {
     const int wid = blockDim.x * blockIdx.x + threadIdx.x;
     const int hid = blockDim.y * blockIdx.y + threadIdx.y;
@@ -50,16 +60,19 @@ __global__ void dct2dPreprocess(const T *x, T *y, const int M, const int N, cons
         default:
             break;
         }
-        y[index] = x[INDEX(hid, wid, N)];
+        y[index] = dctMultiplyRound(
+            x[INDEX(hid, wid, N)], input_scale);
     }
 }
 
 template <typename T>
-void dct2dPreprocessCudaLauncher(const T *x, T *y, const int M, const int N)
+void dct2dPreprocessCudaLauncher(
+    const T *x, T *y, const int M, const int N, const T input_scale)
 {
     dim3 gridSize((N + TPB - 1) / TPB, (M + TPB - 1) / TPB, 1);
     dim3 blockSize(TPB, TPB, 1);
-    dct2dPreprocess<T><<<gridSize, blockSize>>>(x, y, M, N, N / 2);
+    dct2dPreprocess<T><<<gridSize, blockSize>>>(
+        x, y, M, N, N / 2, input_scale);
 }
 
 template <typename T, typename TComplex>
@@ -267,16 +280,6 @@ void idct2_fft2PreprocessCudaLauncher(
     dim3 gridSize((N / 2 + TPB - 1) / TPB, (M / 2 + TPB - 1) / TPB, 1);
     dim3 blockSize(TPB, TPB, 1);
     idct2_fft2Preprocess<T, ComplexType<T>><<<gridSize, blockSize>>>(x, (ComplexType<T> *)y, M, N, M / 2, N / 2, (ComplexType<T> *)expkM, (ComplexType<T> *)expkN);
-}
-
-__device__ __forceinline__ float dctMultiplyRound(float lhs, float rhs)
-{
-    return __fmul_rn(lhs, rhs);
-}
-
-__device__ __forceinline__ double dctMultiplyRound(double lhs, double rhs)
-{
-    return __dmul_rn(lhs, rhs);
 }
 
 template <typename T>
@@ -695,7 +698,8 @@ void idxst_idctPostprocessCudaLauncher(
         const type *x,                                 \
         type *y,                                       \
         const int M,                                   \
-        const int N);
+        const int N,                                   \
+        const type input_scale);
 
 REGISTER_DCT2DPREPROCESS_KERNEL_LAUNCHER(float);
 REGISTER_DCT2DPREPROCESS_KERNEL_LAUNCHER(double);
