@@ -429,7 +429,8 @@ int computeTriangleDensityMapCudaLauncher(
     const int num_bins_x, const int num_bins_y, int num_impacted_bins_x,
     int num_impacted_bins_y, const T xl, const T yl, const T xh, const T yh,
     const T bin_size_x, const T bin_size_y, bool deterministic_flag,
-    T *density_map_tensor, const int *sorted_node_map) {
+    T *density_map_tensor, const int *sorted_node_map,
+    unsigned long long int *deterministic_workspace) {
   if (deterministic_flag)  // deterministic implementation using unsigned long
                            // as fixed point number
   {
@@ -439,8 +440,13 @@ int computeTriangleDensityMapCudaLauncher(
     int fraction_bits = max(64 - integer_bits, 0);
     unsigned long long int scale_factor = (1UL << fraction_bits);
     int num_bins = num_bins_x * num_bins_y;
-    unsigned long long int *scaled_density_map_tensor = NULL;
-    allocateCUDA(scaled_density_map_tensor, num_bins, unsigned long long int);
+    unsigned long long int *scaled_density_map_tensor =
+        deterministic_workspace;
+    bool owns_workspace = false;
+    if (!scaled_density_map_tensor) {
+      allocateCUDA(scaled_density_map_tensor, num_bins, unsigned long long int);
+      owns_workspace = true;
+    }
 
     AtomicAddCUDA<unsigned long long int> atomic_add_op(scale_factor);
 
@@ -460,7 +466,9 @@ int computeTriangleDensityMapCudaLauncher(
                                      scaled_density_map_tensor,
                                      T(1.0 / scale_factor), num_bins);
 
-    destroyCUDA(scaled_density_map_tensor);
+    if (owns_workspace) {
+      destroyCUDA(scaled_density_map_tensor);
+    }
   } else {
     AtomicAddCUDA<T> atomic_add_op;
 
@@ -569,7 +577,8 @@ int computeExactDensityMapCudaLauncher(
       const int num_impacted_bins_x, const int num_impacted_bins_y,            \
       const T xl, const T yl, const T xh, const T yh, const T bin_size_x,      \
       const T bin_size_y, bool deterministic_flag, T *density_map_tensor,      \
-      const int *sorted_node_map);                                             \
+      const int *sorted_node_map,                                               \
+      unsigned long long int *deterministic_workspace);                         \
                                                                                \
   template int computeExactDensityMapCudaLauncher<T>(                          \
       const T *x_tensor, const T *y_tensor, const T *node_size_x_tensor,       \

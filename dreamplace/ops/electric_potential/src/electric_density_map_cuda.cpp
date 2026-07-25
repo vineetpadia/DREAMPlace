@@ -21,7 +21,8 @@ int computeTriangleDensityMapCudaLauncher(
     const int num_bins_x, const int num_bins_y, int num_impacted_bins_x,
     int num_impacted_bins_y, const T xl, const T yl, const T xh, const T yh,
     const T bin_size_x, const T bin_size_y, bool deterministic_flag,
-    T* density_map_tensor, const int* sorted_node_map);
+    T* density_map_tensor, const int* sorted_node_map,
+    unsigned long long int* deterministic_workspace);
 
 // The exact density model
 // Compute the exact overlap area for density
@@ -86,6 +87,19 @@ at::Tensor density_map(
   at::Tensor density_map = initial_density_map.clone();
   int num_nodes = pos.numel() / 2;
 
+  // Use the caching allocator once per density evaluation instead of
+  // cudaMalloc/cudaFree once per node class.  The two launchers still perform
+  // separate scale/add/unscale passes, preserving deterministic arithmetic.
+  at::Tensor deterministic_workspace;
+  unsigned long long int* deterministic_workspace_ptr = nullptr;
+  if (deterministic_flag && (num_movable_nodes || num_filler_nodes)) {
+    deterministic_workspace =
+        at::empty({num_bins_x, num_bins_y}, pos.options().dtype(at::kLong));
+    deterministic_workspace_ptr =
+        reinterpret_cast<unsigned long long int*>(
+            DREAMPLACE_TENSOR_DATA_PTR(deterministic_workspace, int64_t));
+  }
+
   // Call the cuda kernel launcher.
   // Guarded like the filler pass below: with num_movable_nodes == 0 the launcher would
   // still run its deterministic scale/unscale round trip over the whole map, which is
@@ -109,7 +123,8 @@ at::Tensor density_map(
             num_movable_impacted_bins_x, num_movable_impacted_bins_y, xl, yl,
             xh, yh, bin_size_x, bin_size_y, (bool)deterministic_flag,
             DREAMPLACE_TENSOR_DATA_PTR(density_map, scalar_t),
-            DREAMPLACE_TENSOR_DATA_PTR(sorted_node_map, int));
+            DREAMPLACE_TENSOR_DATA_PTR(sorted_node_map, int),
+            deterministic_workspace_ptr);
       });
   }
 
@@ -135,7 +150,8 @@ at::Tensor density_map(
               num_filler_nodes, num_bins_x, num_bins_y,
               num_filler_impacted_bins_x, num_filler_impacted_bins_y, xl, yl,
               xh, yh, bin_size_x, bin_size_y, (bool)deterministic_flag,
-              DREAMPLACE_TENSOR_DATA_PTR(density_map, scalar_t), NULL);
+              DREAMPLACE_TENSOR_DATA_PTR(density_map, scalar_t), NULL,
+              deterministic_workspace_ptr);
         });
   }
 
