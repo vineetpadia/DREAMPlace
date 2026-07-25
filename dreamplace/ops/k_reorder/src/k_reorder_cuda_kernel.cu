@@ -923,7 +923,9 @@ void k_reorder(
         int instance_token_bgn = 0;
         reset_state<<<64, 512>>>(db, state);
 #endif
-        compute_node2inst_map<<<ceilDiv(group_size, 256), 256>>>(
+        constexpr int node2inst_threads = 32;
+        compute_node2inst_map<<<ceilDiv(group_size, node2inst_threads),
+                                node2inst_threads>>>(
             db, state, group_id, group_size, offset, instance_token_bgn);
 #ifndef DETERMINISTIC
         compute_net_markers<<<ceilDiv(db.num_movable_nodes, 256), 256>>>(db,
