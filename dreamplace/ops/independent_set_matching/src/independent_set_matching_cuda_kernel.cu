@@ -80,7 +80,7 @@ struct IndependentSetMatchingState
 
     double* net_hpwls; ///< HPWL for each net, use integer to get consistent values 
 
-    int* selected_markers = nullptr; ///< must be int for cub to compute prefix sum
+    unsigned char* selected_markers = nullptr;
     unsigned char* dependent_markers = nullptr; 
     int* independent_set_empty_flag = nullptr; ///< a stopping flag for maximum independent set 
     ////int* device_num_independent_sets = nullptr; ///< actual number of independent sets 
@@ -334,7 +334,7 @@ int independentSetMatchingCUDALauncher(DetailedPlaceDB<T> db,
         ////allocateCUDA(state.center_ys, state.batch_size*NUM_NODE_SIZES, T);
         //allocateCUDA(state.cluster_sizes, state.batch_size*NUM_NODE_SIZES, T);
         ////allocateCUDA(state.device_num_independent_sets, 1, int);
-        allocateCUDA(state.selected_markers, db.num_nodes, int);
+        allocateCUDA(state.selected_markers, db.num_nodes, unsigned char);
         allocateCUDA(state.dependent_markers, db.num_nodes, unsigned char);
         allocateCUDA(state.independent_set_empty_flag, 1, int); 
 
