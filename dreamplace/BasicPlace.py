@@ -509,7 +509,7 @@ class BasicPlace(nn.Module):
 
         # wirelength for position
         def build_wirelength_op(pos):
-            return wirelength_for_pin_op(pin_pos_op(pos))
+            return wirelength_for_pin_op(pin_pos_op.forward_cached(pos))
 
         return build_wirelength_op
     

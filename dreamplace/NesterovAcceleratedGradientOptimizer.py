@@ -42,7 +42,8 @@ class NesterovAcceleratedGradientOptimizer(Optimizer):
     @brief Follow the Nesterov's implementation of e-place algorithm 2
     http://cseweb.ucsd.edu/~jlu/papers/eplace-todaes14/paper.pdf
     """
-    def __init__(self, params, lr=required, obj_and_grad_fn=required, constraint_fn=None, use_bb=True):
+    def __init__(self, params, lr=required, obj_and_grad_fn=required,
+                 constraint_fn=None, use_bb=True, pin_pos_op=None):
         """
         @brief initialization
         @param params variable to optimize
@@ -71,6 +72,7 @@ class NesterovAcceleratedGradientOptimizer(Optimizer):
         self.obj_and_grad_fn = obj_and_grad_fn
         self.constraint_fn = constraint_fn
         self.use_bb = use_bb
+        self.pin_pos_op = pin_pos_op
         self._can_fuse_boundary = all(
             hasattr(constraint_fn, name)
             for name in (
@@ -286,6 +288,8 @@ class NesterovAcceleratedGradientOptimizer(Optimizer):
                 current_position = v_k.data
                 v_k.data = v_kp1.data
                 v_kp1.data = current_position
+                if self.pin_pos_op is not None:
+                    self.pin_pos_op.transfer_cache(v_k)
                 # DREAMPlace returns v_kp1.grad directly. Keep that accepted
                 # gradient and rotate the old saved-gradient tensor into the
                 # scratch variable for its next backward pass. Preserve a

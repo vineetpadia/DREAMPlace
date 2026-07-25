@@ -124,8 +124,10 @@ class PinPos(nn.Module):
         self.flat_node2pin_start_map = flat_node2pin_start_map
         self.num_physical_nodes = num_physical_nodes
         self.algorithm = algorithm
+        self._cached_pos_key = None
+        self._cached_pin_pos = None
 
-    def forward(self, pos):
+    def _forward_impl(self, pos):
         """
         @brief API 
         @param pos cell locations. The array consists of x locations of movable cells, fixed cells, and filler cells, then y locations of them 
@@ -151,3 +153,40 @@ class PinPos(nn.Module):
                                         self.flat_node2pin_map,
                                         self.flat_node2pin_start_map,
                                         self.num_physical_nodes)
+
+    def forward(self, pos):
+        return self._forward_impl(pos)
+
+    def forward_and_cache(self, pos):
+        """Compute pin locations and remember them for one matching metric."""
+        output = self._forward_impl(pos)
+        if pos.is_cuda:
+            self._cached_pos_key = (pos.data_ptr(), pos._version, pos.numel())
+            self._cached_pin_pos = output
+        return output
+
+    def forward_cached(self, pos):
+        """Consume a matching remembered result, or compute a fresh one."""
+        key = (
+            (pos.data_ptr(), pos._version, pos.numel())
+            if pos.is_cuda else None
+        )
+        output = self._cached_pin_pos
+        matches = key is not None and self._cached_pos_key == key
+        self._cached_pos_key = None
+        self._cached_pin_pos = None
+        return output if matches else self._forward_impl(pos)
+
+    def transfer_cache(self, pos):
+        """Re-key a cached result after accepted storage is rotated to pos."""
+        if not pos.is_cuda or self._cached_pin_pos is None:
+            return
+        key = (pos.data_ptr(), pos._version, pos.numel())
+        if (
+            self._cached_pos_key[0] == key[0]
+            and self._cached_pos_key[2] == key[2]
+        ):
+            self._cached_pos_key = key
+        else:
+            self._cached_pos_key = None
+            self._cached_pin_pos = None

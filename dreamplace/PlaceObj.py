@@ -501,7 +501,7 @@ class PlaceObj(nn.Module):
 
         # wirelength for position
         def build_wirelength_op(pos):
-            return wirelength_for_pin_op(pin_pos_op(pos))
+            return wirelength_for_pin_op(pin_pos_op.forward_and_cache(pos))
 
         # update gamma
         base_gamma = self.base_gamma(params, placedb)
@@ -534,7 +534,7 @@ class PlaceObj(nn.Module):
 
         # wirelength for position
         def build_wirelength_op(pos):
-            return wirelength_for_pin_op(pin_pos_op(pos))
+            return wirelength_for_pin_op(pin_pos_op.forward_and_cache(pos))
 
         # update gamma
         base_gamma = self.base_gamma(params, placedb)
