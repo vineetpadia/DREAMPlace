@@ -358,6 +358,7 @@ __global__ void computeElectricForceSimpleLikeCPU(
     const T *offset_x_tensor, const T *offset_y_tensor, const T *ratio_tensor,
     const T *bin_center_x_tensor, const T *bin_center_y_tensor, T xl, T yl,
     T xh, T yh, T bin_size_x, T bin_size_y, int num_nodes,
+    int num_movable_nodes, int num_filler_nodes,
     const T *grad_pos, T *grad_x_tensor, T *grad_y_tensor) {
   // density_map_tensor should be initialized outside
 
@@ -365,6 +366,12 @@ __global__ void computeElectricForceSimpleLikeCPU(
   T inv_bin_size_y = 1.0 / bin_size_y;
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i < num_nodes) {
+    if (i >= num_movable_nodes && i < num_nodes - num_filler_nodes) {
+      grad_x_tensor[i] = 0;
+      grad_y_tensor[i] = 0;
+      return;
+    }
+
     // use stretched node size
     T node_size_x = node_size_x_clamped_tensor[i];
     T node_size_y = node_size_y_clamped_tensor[i];
@@ -420,7 +427,8 @@ int computeElectricForceCudaLauncher(
     const T *node_size_x_clamped_tensor, const T *node_size_y_clamped_tensor,
     const T *offset_x_tensor, const T *offset_y_tensor, const T *ratio_tensor,
     const T *bin_center_x_tensor, const T *bin_center_y_tensor, T xl, T yl,
-    T xh, T yh, T bin_size_x, T bin_size_y, int num_nodes, bool deterministic_flag, 
+    T xh, T yh, T bin_size_x, T bin_size_y, int num_nodes,
+    int num_movable_nodes, int num_filler_nodes, bool deterministic_flag,
     const T *grad_pos, T *grad_x_tensor, T *grad_y_tensor,
     const int *sorted_node_map) {
   int thread_count = 64;
@@ -438,7 +446,7 @@ int computeElectricForceCudaLauncher(
         bin_center_x_tensor, bin_center_y_tensor,
         xl, yl, xh, yh,
         bin_size_x, bin_size_y,
-        num_nodes,
+        num_nodes, num_movable_nodes, num_filler_nodes,
         grad_pos,
         grad_x_tensor, grad_y_tensor);
   } else {
@@ -465,7 +473,8 @@ int computeElectricForceCudaLauncher(
       const T *node_size_y_clamped_tensor, const T *offset_x_tensor,           \
       const T *offset_y_tensor, const T *ratio_tensor,                         \
       const T *bin_center_x_tensor, const T *bin_center_y_tensor, T xl, T yl,  \
-      T xh, T yh, T bin_size_x, T bin_size_y, int num_nodes, bool deterministic_flag, \
+      T xh, T yh, T bin_size_x, T bin_size_y, int num_nodes,                   \
+      int num_movable_nodes, int num_filler_nodes, bool deterministic_flag,    \
       const T *grad_pos, T *grad_x_tensor, T *grad_y_tensor,                   \
       const int *sorted_node_map);
 

@@ -17,7 +17,8 @@ int computeElectricForceCudaLauncher(
     const T* node_size_x_clamped_tensor, const T* node_size_y_clamped_tensor,
     const T* offset_x_tensor, const T* offset_y_tensor, const T* ratio_tensor,
     const T* bin_center_x_tensor, const T* bin_center_y_tensor, T xl, T yl,
-    T xh, T yh, T bin_size_x, T bin_size_y, int num_nodes, bool deterministic_flag, 
+    T xh, T yh, T bin_size_x, T bin_size_y, int num_nodes,
+    int num_movable_nodes, int num_filler_nodes, bool deterministic_flag,
     const T* grad_pos, T* grad_x_tensor, T* grad_y_tensor,
     const int* sorted_node_map);
 
@@ -72,9 +73,39 @@ at::Tensor electric_force(
   CHECK_FLAT_CUDA(field_map_y);
   CHECK_CONTIGUOUS(field_map_y);
 
-  at::Tensor grad_out = at::zeros_like(pos);
   int num_nodes = pos.numel() / 2;
   int num_physical_nodes = num_nodes - num_filler_nodes;
+  at::Tensor grad_out =
+      deterministic_flag ? at::empty_like(pos) : at::zeros_like(pos);
+
+  if (deterministic_flag) {
+    // The deterministic kernel writes movable cells, fixed-cell zeros, and
+    // fillers in one pass, so it does not need a clear or a second launch.
+    DREAMPLACE_DISPATCH_FLOATING_TYPES(
+        pos, "computeElectricForceCudaLauncher", [&] {
+          computeElectricForceCudaLauncher<scalar_t>(
+              num_bins_x, num_bins_y, num_movable_impacted_bins_x,
+              num_movable_impacted_bins_y,
+              DREAMPLACE_TENSOR_DATA_PTR(field_map_x, scalar_t),
+              DREAMPLACE_TENSOR_DATA_PTR(field_map_y, scalar_t),
+              DREAMPLACE_TENSOR_DATA_PTR(pos, scalar_t),
+              DREAMPLACE_TENSOR_DATA_PTR(pos, scalar_t) + num_nodes,
+              DREAMPLACE_TENSOR_DATA_PTR(node_size_x_clamped, scalar_t),
+              DREAMPLACE_TENSOR_DATA_PTR(node_size_y_clamped, scalar_t),
+              DREAMPLACE_TENSOR_DATA_PTR(offset_x, scalar_t),
+              DREAMPLACE_TENSOR_DATA_PTR(offset_y, scalar_t),
+              DREAMPLACE_TENSOR_DATA_PTR(ratio, scalar_t),
+              DREAMPLACE_TENSOR_DATA_PTR(bin_center_x, scalar_t),
+              DREAMPLACE_TENSOR_DATA_PTR(bin_center_y, scalar_t), xl, yl, xh,
+              yh, bin_size_x, bin_size_y, num_nodes, num_movable_nodes,
+              num_filler_nodes, true,
+              DREAMPLACE_TENSOR_DATA_PTR(grad_pos, scalar_t),
+              DREAMPLACE_TENSOR_DATA_PTR(grad_out, scalar_t),
+              DREAMPLACE_TENSOR_DATA_PTR(grad_out, scalar_t) + num_nodes,
+              DREAMPLACE_TENSOR_DATA_PTR(sorted_node_map, int));
+        });
+    return grad_out;
+  }
 
   DREAMPLACE_DISPATCH_FLOATING_TYPES(
       pos, "computeElectricForceCudaLauncher", [&] {
@@ -92,8 +123,8 @@ at::Tensor electric_force(
             DREAMPLACE_TENSOR_DATA_PTR(ratio, scalar_t),
             DREAMPLACE_TENSOR_DATA_PTR(bin_center_x, scalar_t),
             DREAMPLACE_TENSOR_DATA_PTR(bin_center_y, scalar_t), xl, yl, xh, yh,
-            bin_size_x, bin_size_y, num_movable_nodes, (bool)deterministic_flag,
-            DREAMPLACE_TENSOR_DATA_PTR(grad_pos, scalar_t),
+            bin_size_x, bin_size_y, num_movable_nodes, num_movable_nodes, 0,
+            false, DREAMPLACE_TENSOR_DATA_PTR(grad_pos, scalar_t),
             DREAMPLACE_TENSOR_DATA_PTR(grad_out, scalar_t),
             DREAMPLACE_TENSOR_DATA_PTR(grad_out, scalar_t) + num_nodes,
             DREAMPLACE_TENSOR_DATA_PTR(sorted_node_map, int));
@@ -116,7 +147,8 @@ at::Tensor electric_force(
               DREAMPLACE_TENSOR_DATA_PTR(ratio, scalar_t) + num_physical_nodes,
               DREAMPLACE_TENSOR_DATA_PTR(bin_center_x, scalar_t),
               DREAMPLACE_TENSOR_DATA_PTR(bin_center_y, scalar_t), xl, yl, xh,
-              yh, bin_size_x, bin_size_y, num_filler_nodes, (bool)deterministic_flag,
+              yh, bin_size_x, bin_size_y, num_filler_nodes,
+              num_filler_nodes, 0, false,
               DREAMPLACE_TENSOR_DATA_PTR(grad_pos, scalar_t),
               DREAMPLACE_TENSOR_DATA_PTR(grad_out, scalar_t) + num_physical_nodes,
               DREAMPLACE_TENSOR_DATA_PTR(grad_out, scalar_t) + num_nodes + num_physical_nodes,
