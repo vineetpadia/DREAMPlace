@@ -36,26 +36,50 @@ __global__ void __launch_bounds__(1024, 8) computeTriangleDensityMap(
 ) {
   int index = blockIdx.x * blockDim.z + threadIdx.z;
   if (index < num_nodes) {
-    int i = (sorted_node_map) ? sorted_node_map[index] : index;
+    int node_lane = threadIdx.x + blockDim.x * threadIdx.y;
+    int i = index;
+    T node_size_x = 0;
+    T node_size_y = 0;
+    T node_x = 0;
+    T node_y = 0;
+    T ratio = 0;
+    int bin_index_xl = 0;
+    int bin_index_xh = 0;
+    int bin_index_yl = 0;
+    int bin_index_yh = 0;
+    if (node_lane == 0) {
+      i = (sorted_node_map) ? sorted_node_map[index] : index;
 
-    // use stretched node size
-    T node_size_x = node_size_x_clamped_tensor[i];
-    T node_size_y = node_size_y_clamped_tensor[i];
-    T node_x = x_tensor[i] + offset_x_tensor[i];
-    T node_y = y_tensor[i] + offset_y_tensor[i];
-    T ratio = ratio_tensor[i];
+      // use stretched node size
+      node_size_x = node_size_x_clamped_tensor[i];
+      node_size_y = node_size_y_clamped_tensor[i];
+      node_x = x_tensor[i] + offset_x_tensor[i];
+      node_y = y_tensor[i] + offset_y_tensor[i];
+      ratio = ratio_tensor[i];
 
-    int bin_index_xl = int((node_x - xl) * inv_bin_size_x);
-    int bin_index_xh =
-        int(((node_x + node_size_x - xl) * inv_bin_size_x)) + 1;  // exclusive
-    bin_index_xl = DREAMPLACE_STD_NAMESPACE::max(bin_index_xl, 0);
-    bin_index_xh = DREAMPLACE_STD_NAMESPACE::min(bin_index_xh, num_bins_x);
+      bin_index_xl = int((node_x - xl) * inv_bin_size_x);
+      bin_index_xh =
+          int(((node_x + node_size_x - xl) * inv_bin_size_x)) + 1;
+      bin_index_xl = DREAMPLACE_STD_NAMESPACE::max(bin_index_xl, 0);
+      bin_index_xh = DREAMPLACE_STD_NAMESPACE::min(bin_index_xh, num_bins_x);
 
-    int bin_index_yl = int((node_y - yl) * inv_bin_size_y);
-    int bin_index_yh =
-        int(((node_y + node_size_y - yl) * inv_bin_size_y)) + 1;  // exclusive
-    bin_index_yl = DREAMPLACE_STD_NAMESPACE::max(bin_index_yl, 0);
-    bin_index_yh = DREAMPLACE_STD_NAMESPACE::min(bin_index_yh, num_bins_y);
+      bin_index_yl = int((node_y - yl) * inv_bin_size_y);
+      bin_index_yh =
+          int(((node_y + node_size_y - yl) * inv_bin_size_y)) + 1;
+      bin_index_yl = DREAMPLACE_STD_NAMESPACE::max(bin_index_yl, 0);
+      bin_index_yh = DREAMPLACE_STD_NAMESPACE::min(bin_index_yh, num_bins_y);
+    }
+
+    unsigned int active_mask = __activemask();
+    node_size_x = __shfl_sync(active_mask, node_size_x, 0, 4);
+    node_size_y = __shfl_sync(active_mask, node_size_y, 0, 4);
+    node_x = __shfl_sync(active_mask, node_x, 0, 4);
+    node_y = __shfl_sync(active_mask, node_y, 0, 4);
+    ratio = __shfl_sync(active_mask, ratio, 0, 4);
+    bin_index_xl = __shfl_sync(active_mask, bin_index_xl, 0, 4);
+    bin_index_xh = __shfl_sync(active_mask, bin_index_xh, 0, 4);
+    bin_index_yl = __shfl_sync(active_mask, bin_index_yl, 0, 4);
+    bin_index_yh = __shfl_sync(active_mask, bin_index_yh, 0, 4);
 
     // update density potential map
     for (int k = bin_index_xl + threadIdx.y; k < bin_index_xh;
