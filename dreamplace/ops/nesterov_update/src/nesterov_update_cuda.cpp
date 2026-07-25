@@ -13,7 +13,11 @@ void nesterovUpdateWithBoundaryCudaLauncher(
     const T* v_k, const T* g_k, const T* u_k, const T* alpha_k,
     T coefficient, const T* node_size_x, const T* node_size_y, T xl, T yl,
     T xh, T yh, int num_movable_nodes, int num_filler_nodes, T* u_kp1,
-    T* v_kp1, int numel);
+    T* v_kp1, T* delta_squared, int numel);
+
+template <typename T>
+void squaredDifferenceCudaLauncher(
+    const T* lhs, const T* rhs, T* output, int numel);
 
 void check_nesterov_tensors(
     const at::Tensor& v_k, const at::Tensor& g_k, const at::Tensor& u_k,
@@ -66,12 +70,15 @@ void nesterov_update_with_boundary_forward(
     at::Tensor v_k, at::Tensor g_k, at::Tensor u_k, at::Tensor alpha_k,
     double coefficient, at::Tensor node_size_x, at::Tensor node_size_y,
     double xl, double yl, double xh, double yh, int num_movable_nodes,
-    int num_filler_nodes, at::Tensor u_kp1, at::Tensor v_kp1) {
+    int num_filler_nodes, at::Tensor u_kp1, at::Tensor v_kp1,
+    at::Tensor delta_squared) {
   check_nesterov_tensors(v_k, g_k, u_k, alpha_k, u_kp1, v_kp1);
   CHECK_FLAT_CUDA(node_size_x);
   CHECK_FLAT_CUDA(node_size_y);
+  CHECK_FLAT_CUDA(delta_squared);
   CHECK_CONTIGUOUS(node_size_x);
   CHECK_CONTIGUOUS(node_size_y);
+  CHECK_CONTIGUOUS(delta_squared);
   CHECK_EVEN(v_k);
   int num_nodes = v_k.numel() / 2;
   AT_ASSERTM(
@@ -81,6 +88,10 @@ void nesterov_update_with_boundary_forward(
       node_size_x.scalar_type() == v_k.scalar_type() &&
           node_size_y.scalar_type() == v_k.scalar_type(),
       "node sizes and Nesterov state tensors must have the same dtype");
+  AT_ASSERTM(
+      delta_squared.numel() == v_k.numel() &&
+          delta_squared.scalar_type() == v_k.scalar_type(),
+      "delta_squared must match the Nesterov state tensors");
 
   DREAMPLACE_DISPATCH_FLOATING_TYPES(
       v_k, "nesterovUpdateWithBoundaryCudaLauncher", [&] {
@@ -96,7 +107,34 @@ void nesterov_update_with_boundary_forward(
             static_cast<scalar_t>(xh), static_cast<scalar_t>(yh),
             num_movable_nodes, num_filler_nodes,
             DREAMPLACE_TENSOR_DATA_PTR(u_kp1, scalar_t),
-            DREAMPLACE_TENSOR_DATA_PTR(v_kp1, scalar_t), v_k.numel());
+            DREAMPLACE_TENSOR_DATA_PTR(v_kp1, scalar_t),
+            DREAMPLACE_TENSOR_DATA_PTR(delta_squared, scalar_t),
+            v_k.numel());
+      });
+}
+
+void squared_difference_forward(
+    at::Tensor lhs, at::Tensor rhs, at::Tensor output) {
+  CHECK_FLAT_CUDA(lhs);
+  CHECK_FLAT_CUDA(rhs);
+  CHECK_FLAT_CUDA(output);
+  CHECK_CONTIGUOUS(lhs);
+  CHECK_CONTIGUOUS(rhs);
+  CHECK_CONTIGUOUS(output);
+  AT_ASSERTM(
+      rhs.numel() == lhs.numel() && output.numel() == lhs.numel(),
+      "squared-difference tensors must have the same length");
+  AT_ASSERTM(
+      rhs.scalar_type() == lhs.scalar_type() &&
+          output.scalar_type() == lhs.scalar_type(),
+      "squared-difference tensors must have the same dtype");
+
+  DREAMPLACE_DISPATCH_FLOATING_TYPES(
+      lhs, "squaredDifferenceCudaLauncher", [&] {
+        squaredDifferenceCudaLauncher<scalar_t>(
+            DREAMPLACE_TENSOR_DATA_PTR(lhs, scalar_t),
+            DREAMPLACE_TENSOR_DATA_PTR(rhs, scalar_t),
+            DREAMPLACE_TENSOR_DATA_PTR(output, scalar_t), lhs.numel());
       });
 }
 
@@ -109,4 +147,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       "forward_with_boundary",
       &DREAMPLACE_NAMESPACE::nesterov_update_with_boundary_forward,
       "Nesterov state update with boundary projection (CUDA)");
+  m.def(
+      "squared_difference",
+      &DREAMPLACE_NAMESPACE::squared_difference_forward,
+      "Elementwise squared difference (CUDA)");
 }

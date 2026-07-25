@@ -90,6 +90,7 @@ class NesterovUpdateTest(unittest.TestCase):
 
         actual_u = torch.empty_like(v_k)
         actual_v = torch.empty_like(v_k)
+        actual_delta_squared = torch.empty_like(v_k)
         nesterov_update_cuda.forward_with_boundary(
             v_k,
             g_k,
@@ -103,10 +104,25 @@ class NesterovUpdateTest(unittest.TestCase):
             num_filler_nodes,
             actual_u,
             actual_v,
+            actual_delta_squared,
         )
 
         self.assertTrue(torch.equal(expected_u, actual_u))
         self.assertTrue(torch.equal(expected_v, actual_v))
+        expected_delta_squared = (expected_v - v_k) ** 2
+        self.assertTrue(
+            torch.equal(expected_delta_squared, actual_delta_squared)
+        )
+
+    def test_squared_difference_matches_pytorch_bitwise(self):
+        for dtype in (torch.float32, torch.float64):
+            torch.manual_seed(23)
+            lhs = torch.randn(100003, dtype=dtype, device="cuda") * 1000
+            rhs = torch.randn(100003, dtype=dtype, device="cuda") * 1000
+            expected = (lhs - rhs) ** 2
+            actual = torch.empty_like(lhs)
+            nesterov_update_cuda.squared_difference(lhs, rhs, actual)
+            self.assertTrue(torch.equal(expected, actual))
 
 
 if __name__ == "__main__":

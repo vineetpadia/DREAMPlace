@@ -42,7 +42,7 @@ __device__ __forceinline__ double rounded_add(double lhs, double rhs) {
   return __dadd_rn(lhs, rhs);
 }
 
-template <typename T, bool ApplyBoundary>
+template <typename T, bool ApplyBoundary, bool WriteDeltaSquared>
 __global__ void nesterovUpdateKernel(
     const T* __restrict__ v_k,
     const T* __restrict__ g_k,
@@ -59,6 +59,7 @@ __global__ void nesterovUpdateKernel(
     int num_filler_nodes,
     T* __restrict__ u_kp1,
     T* __restrict__ v_kp1,
+    T* __restrict__ delta_squared,
     int numel) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i < numel) {
@@ -83,6 +84,23 @@ __global__ void nesterovUpdateKernel(
     }
     u_kp1[i] = next_u;
     v_kp1[i] = next_v;
+    if (WriteDeltaSquared) {
+      T delta = rounded_sub(next_v, v_k[i]);
+      delta_squared[i] = rounded_mul(delta, delta);
+    }
+  }
+}
+
+template <typename T>
+__global__ void squaredDifferenceKernel(
+    const T* __restrict__ lhs,
+    const T* __restrict__ rhs,
+    T* __restrict__ output,
+    int numel) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < numel) {
+    T delta = rounded_sub(lhs[i], rhs[i]);
+    output[i] = rounded_mul(delta, delta);
   }
 }
 
@@ -91,10 +109,10 @@ void nesterovUpdateCudaLauncher(
     const T* v_k, const T* g_k, const T* u_k, const T* alpha_k,
     T coefficient, T* u_kp1, T* v_kp1, int numel) {
   constexpr int thread_count = 256;
-  nesterovUpdateKernel<T, false>
+  nesterovUpdateKernel<T, false, false>
       <<<ceilDiv(numel, thread_count), thread_count, 0, DREAMPLACE_STREAM>>>(
           v_k, g_k, u_k, alpha_k, coefficient, nullptr, nullptr, 0, 0, 0, 0,
-          0, 0, u_kp1, v_kp1, numel);
+          0, 0, u_kp1, v_kp1, nullptr, numel);
 }
 
 template <typename T>
@@ -102,13 +120,22 @@ void nesterovUpdateWithBoundaryCudaLauncher(
     const T* v_k, const T* g_k, const T* u_k, const T* alpha_k,
     T coefficient, const T* node_size_x, const T* node_size_y, T xl, T yl,
     T xh, T yh, int num_movable_nodes, int num_filler_nodes, T* u_kp1,
-    T* v_kp1, int numel) {
+    T* v_kp1, T* delta_squared, int numel) {
   constexpr int thread_count = 256;
-  nesterovUpdateKernel<T, true>
+  nesterovUpdateKernel<T, true, true>
       <<<ceilDiv(numel, thread_count), thread_count, 0, DREAMPLACE_STREAM>>>(
           v_k, g_k, u_k, alpha_k, coefficient, node_size_x, node_size_y, xl,
           yl, xh, yh, num_movable_nodes, num_filler_nodes, u_kp1, v_kp1,
-          numel);
+          delta_squared, numel);
+}
+
+template <typename T>
+void squaredDifferenceCudaLauncher(
+    const T* lhs, const T* rhs, T* output, int numel) {
+  constexpr int thread_count = 256;
+  squaredDifferenceKernel<T>
+      <<<ceilDiv(numel, thread_count), thread_count, 0, DREAMPLACE_STREAM>>>(
+          lhs, rhs, output, numel);
 }
 
 #define REGISTER_KERNEL_LAUNCHER(T)                                        \
@@ -119,7 +146,9 @@ void nesterovUpdateWithBoundaryCudaLauncher(
       const T* v_k, const T* g_k, const T* u_k, const T* alpha_k,           \
       T coefficient, const T* node_size_x, const T* node_size_y, T xl,      \
       T yl, T xh, T yh, int num_movable_nodes, int num_filler_nodes,        \
-      T* u_kp1, T* v_kp1, int numel);
+      T* u_kp1, T* v_kp1, T* delta_squared, int numel);                     \
+  template void squaredDifferenceCudaLauncher<T>(                           \
+      const T* lhs, const T* rhs, T* output, int numel);
 
 REGISTER_KERNEL_LAUNCHER(float);
 REGISTER_KERNEL_LAUNCHER(double);

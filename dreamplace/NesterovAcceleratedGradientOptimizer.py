@@ -159,6 +159,19 @@ class NesterovAcceleratedGradientOptimizer(Optimizer):
                 if u_kp1_state[i] is None:
                     u_kp1_state[i] = torch.zeros_like(v_k)
                 u_kp1 = u_kp1_state[i]
+                use_fused_update = (
+                    nesterov_update_cuda is not None and u_kp1.is_cuda
+                    and isinstance(a_k, np.float32)
+                )
+                can_fuse_boundary = (
+                    use_fused_update and self._can_fuse_boundary
+                )
+                delta_squared = None
+                if can_fuse_boundary:
+                    delta_state = group.setdefault('delta_squared', [None])
+                    if delta_state[i] is None:
+                        delta_state[i] = torch.empty_like(v_k)
+                    delta_squared = delta_state[i]
 
                 # line search with alpha_k as hint
                 if isinstance(a_k, np.float32):
@@ -176,9 +189,7 @@ class NesterovAcceleratedGradientOptimizer(Optimizer):
                     # Optimizer state updates are not part of the objective's
                     # autograd graph. Using the value view avoids constructing
                     # and immediately discarding a graph every iteration.
-                    if (nesterov_update_cuda is not None and u_kp1.is_cuda
-                            and isinstance(a_k, np.float32)):
-                        can_fuse_boundary = self._can_fuse_boundary
+                    if use_fused_update:
                         if can_fuse_boundary:
                             nesterov_update_cuda.forward_with_boundary(
                                 v_k.data, g_k, u_k, alpha_k, coef,
@@ -188,7 +199,7 @@ class NesterovAcceleratedGradientOptimizer(Optimizer):
                                 constraint_fn.xh, constraint_fn.yh,
                                 constraint_fn.num_movable_nodes,
                                 constraint_fn.num_filler_nodes,
-                                u_kp1, v_kp1.data)
+                                u_kp1, v_kp1.data, delta_squared)
                         else:
                             nesterov_update_cuda.forward(
                                 v_k.data, g_k, u_k, alpha_k, coef,
@@ -209,7 +220,16 @@ class NesterovAcceleratedGradientOptimizer(Optimizer):
                     f_kp1, g_kp1 = obj_and_grad_fn(v_kp1)
 
                     #tt = time.time()
-                    alpha_kp1 = torch.sqrt(torch.sum((v_kp1.data-v_k.data)**2) / torch.sum((g_kp1.data-g_k.data)**2))
+                    if can_fuse_boundary:
+                        position_delta_norm_squared = torch.sum(delta_squared)
+                        nesterov_update_cuda.squared_difference(
+                            g_kp1.data, g_k.data, delta_squared)
+                        gradient_delta_norm_squared = torch.sum(delta_squared)
+                        alpha_kp1 = torch.sqrt(
+                            position_delta_norm_squared
+                            / gradient_delta_norm_squared)
+                    else:
+                        alpha_kp1 = torch.sqrt(torch.sum((v_kp1.data-v_k.data)**2) / torch.sum((g_kp1.data-g_k.data)**2))
                     # alpha_kp1 = torch.dist(v_kp1.data, v_k.data, p=2) / torch.dist(g_kp1.data, g_k.data, p=2)
                     backtrack_cnt += 1
                     group['obj_eval_count'] += 1
