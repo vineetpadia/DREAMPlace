@@ -627,6 +627,25 @@ int computeExactDensityMapCudaLauncher(
   return 0;
 }
 
+template <typename T>
+__global__ void densityOverflowMap(
+    const T *density_map, T target_area, T *overflow_map, int num_bins) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < num_bins) {
+    T overflow = density_map[i] - target_area;
+    overflow_map[i] = overflow < T(0) ? T(0) : overflow;
+  }
+}
+
+template <typename T>
+void densityOverflowMapCudaLauncher(
+    const T *density_map, T target_area, T *overflow_map, int num_bins) {
+  constexpr int thread_count = 256;
+  densityOverflowMap<<<(num_bins + thread_count - 1) / thread_count,
+                       thread_count, 0, DREAMPLACE_STREAM>>>(
+      density_map, target_area, overflow_map, num_bins);
+}
+
 #define REGISTER_KERNEL_LAUNCHER(T)                                            \
   template int computeTriangleDensityMapCudaLauncher<T>(                       \
       const T *x_tensor, const T *y_tensor,                                    \
@@ -649,7 +668,10 @@ int computeExactDensityMapCudaLauncher(
       const int num_bins_y, const int num_impacted_bins_x,                     \
       const int num_impacted_bins_y, const T xl, const T yl, const T xh,       \
       const T yh, const T bin_size_x, const T bin_size_y,                      \
-      bool fixed_node_flag, bool deterministic_flag, T *density_map_tensor); 
+      bool fixed_node_flag, bool deterministic_flag, T *density_map_tensor);   \
+                                                                               \
+  template void densityOverflowMapCudaLauncher<T>(                             \
+      const T *density_map, T target_area, T *overflow_map, int num_bins);
 
 REGISTER_KERNEL_LAUNCHER(float);
 REGISTER_KERNEL_LAUNCHER(double);

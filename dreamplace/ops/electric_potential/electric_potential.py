@@ -559,7 +559,12 @@ class ElectricPotential(ElectricOverflow):
                 self.deterministic_flag, self.sorted_node_map)
 
             bin_area = self.bin_size_x * self.bin_size_y
-            density_cost = (density_map -
-                            self.target_density * bin_area).clamp_(min=0.0).sum()
+            target_area = self.target_density * bin_area
+            if density_map.is_cuda:
+                overflow_map = electric_potential_cuda.density_overflow_map(
+                    density_map, target_area)
+            else:
+                overflow_map = (density_map - target_area).clamp_(min=0.0)
+            density_cost = overflow_map.sum()
 
             return density_cost, density_map.max() / bin_area

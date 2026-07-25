@@ -38,6 +38,10 @@ int computeExactDensityMapCudaLauncher(
     const T yh, const T bin_size_x, const T bin_size_y, bool fixed_node_flag,
     bool deterministic_flag, T* density_map_tensor);
 
+template <typename T>
+void densityOverflowMapCudaLauncher(
+    const T* density_map, T target_area, T* overflow_map, int num_bins);
+
 /// @brief compute density map for movable and filler cells
 /// @param pos cell locations. The array consists of all x locations and then y
 /// locations.
@@ -219,6 +223,22 @@ at::Tensor fixed_density_map(at::Tensor pos, at::Tensor node_size_x,
   return density_map;
 }
 
+at::Tensor density_overflow_map(at::Tensor density_map, double target_area) {
+  CHECK_CUDA(density_map);
+  CHECK_CONTIGUOUS(density_map);
+
+  at::Tensor overflow_map = at::empty_like(density_map);
+  DREAMPLACE_DISPATCH_FLOATING_TYPES(
+      density_map, "densityOverflowMapCudaLauncher", [&] {
+        densityOverflowMapCudaLauncher<scalar_t>(
+            DREAMPLACE_TENSOR_DATA_PTR(density_map, scalar_t),
+            static_cast<scalar_t>(target_area),
+            DREAMPLACE_TENSOR_DATA_PTR(overflow_map, scalar_t),
+            density_map.numel());
+      });
+  return overflow_map;
+}
+
 /// @brief Compute electric force for movable and filler cells
 /// @param grad_pos input gradient from backward propagation
 /// @param num_bins_x number of bins in horizontal bins
@@ -282,6 +302,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         "ElectricPotential Density Map (CUDA)");
   m.def("fixed_density_map", &DREAMPLACE_NAMESPACE::fixed_density_map,
         "ElectricPotential Density Map for Fixed Cells (CUDA)");
+  m.def("density_overflow_map",
+        &DREAMPLACE_NAMESPACE::density_overflow_map,
+        "Positive density overflow map (CUDA)");
   m.def("electric_force", &DREAMPLACE_NAMESPACE::electric_force,
         "ElectricPotential Electric Force (CUDA)");
   m.def("electric_force_negative",
