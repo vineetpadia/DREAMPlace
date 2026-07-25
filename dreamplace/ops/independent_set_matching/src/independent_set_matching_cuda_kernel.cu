@@ -81,7 +81,6 @@ struct IndependentSetMatchingState
     double* net_hpwls; ///< HPWL for each net, use integer to get consistent values 
 
     unsigned char* selected_markers = nullptr;
-    unsigned char* dependent_markers = nullptr; 
     int* independent_set_empty_flag = nullptr; ///< a stopping flag for maximum independent set 
     ////int* device_num_independent_sets = nullptr; ///< actual number of independent sets 
     int num_independent_sets; ///< host copy 
@@ -335,7 +334,6 @@ int independentSetMatchingCUDALauncher(DetailedPlaceDB<T> db,
         //allocateCUDA(state.cluster_sizes, state.batch_size*NUM_NODE_SIZES, T);
         ////allocateCUDA(state.device_num_independent_sets, 1, int);
         allocateCUDA(state.selected_markers, db.num_nodes, unsigned char);
-        allocateCUDA(state.dependent_markers, db.num_nodes, unsigned char);
         allocateCUDA(state.independent_set_empty_flag, 1, int); 
 
         allocateCUDA(state.cost_matrices, state.batch_size*state.set_size*state.set_size, typename IndependentSetMatchingState<T>::cost_type);
@@ -514,7 +512,6 @@ int independentSetMatchingCUDALauncher(DetailedPlaceDB<T> db,
         destroyCUDA(state.orig_costs);
         destroyCUDA(state.solution_costs);
         destroyCUDA(state.selected_markers);
-        destroyCUDA(state.dependent_markers);
         destroyCUDA(state.independent_set_empty_flag);
         ////destroyCUDA(state.device_num_independent_sets);
         destroyCUDA(state.device_num_moved);
