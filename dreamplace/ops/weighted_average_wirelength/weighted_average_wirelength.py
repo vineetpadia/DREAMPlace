@@ -212,11 +212,17 @@ class WeightedAverageWirelengthMergedFunction(Function):
             func = weighted_average_wirelength_cuda_merged.backward
         else:
             func = weighted_average_wirelength_cpp_merged.backward
-        output = func(grad_pos, ctx.pos, ctx.grad_intermediate,
-                      ctx.flat_netpin, ctx.netpin_start, ctx.pin2net_map,
-                      ctx.net_weights, ctx.net_mask, ctx.inv_gamma)
-        output[:int(output.numel() // 2)].masked_fill_(ctx.pin_mask, 0.0)
-        output[int(output.numel() // 2):].masked_fill_(ctx.pin_mask, 0.0)
+        if grad_pos.is_cuda:
+            output = func(grad_pos, ctx.pos, ctx.grad_intermediate,
+                          ctx.flat_netpin, ctx.netpin_start, ctx.pin2net_map,
+                          ctx.net_weights, ctx.net_mask, ctx.inv_gamma,
+                          ctx.pin_mask)
+        else:
+            output = func(grad_pos, ctx.pos, ctx.grad_intermediate,
+                          ctx.flat_netpin, ctx.netpin_start, ctx.pin2net_map,
+                          ctx.net_weights, ctx.net_mask, ctx.inv_gamma)
+            output[:int(output.numel() // 2)].masked_fill_(ctx.pin_mask, 0.0)
+            output[int(output.numel() // 2):].masked_fill_(ctx.pin_mask, 0.0)
         if logger.isEnabledFor(logging.DEBUG):
             if grad_pos.is_cuda:
                 torch.cuda.synchronize()

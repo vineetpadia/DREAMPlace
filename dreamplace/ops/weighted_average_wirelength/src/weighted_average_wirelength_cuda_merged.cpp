@@ -38,12 +38,11 @@ int computeWeightedAverageWirelengthCudaMergedLauncher(
     const unsigned char* net_mask, int num_nets, const T* inv_gamma,
     T* partial_wl, T* grad_intermediate_x, T* grad_intermediate_y);
 
-/// @brief add net weights to gradient
 template <typename T>
-void integrateNetWeightsCudaLauncher(const int* pin2net_map,
-                                     const unsigned char* net_mask,
-                                     const T* net_weights, T* grad_x_tensor,
-                                     T* grad_y_tensor, int num_pins);
+void scaleIntegrateNetWeightsAndMaskCudaLauncher(
+    const int* pin2net_map, const unsigned char* net_mask,
+    const T* net_weights, const T* grad_pos, const bool* pin_mask,
+    T* grad_x_tensor, T* grad_y_tensor, int num_pins, bool has_net_weights);
 
 /// @brief Compute weighted average wirelength and gradient.
 /// WL = \sum_i x_i*exp(x_i/gamma) / \sum_i exp(x_i/gamma) - \sum_i
@@ -121,7 +120,8 @@ std::vector<at::Tensor> weighted_average_wirelength_forward(
 at::Tensor weighted_average_wirelength_backward(
     at::Tensor grad_pos, at::Tensor pos, at::Tensor grad_intermediate,
     at::Tensor flat_netpin, at::Tensor netpin_start, at::Tensor pin2net_map,
-    at::Tensor net_weights, at::Tensor net_mask, at::Tensor inv_gamma) {
+    at::Tensor net_weights, at::Tensor net_mask, at::Tensor inv_gamma,
+    at::Tensor pin_mask) {
   CHECK_FLAT_CUDA(pos);
   CHECK_EVEN(pos);
   CHECK_CONTIGUOUS(pos);
@@ -138,22 +138,24 @@ at::Tensor weighted_average_wirelength_backward(
   CHECK_FLAT_CUDA(grad_intermediate);
   CHECK_EVEN(grad_intermediate);
   CHECK_CONTIGUOUS(grad_intermediate);
+  CHECK_FLAT_CUDA(pin_mask);
+  CHECK_CONTIGUOUS(pin_mask);
 
-  at::Tensor grad_out = grad_intermediate.mul_(grad_pos);
+  at::Tensor grad_out = grad_intermediate;
   // int num_nets = netpin_start.numel() - 1;
   int num_pins = pos.numel() / 2;
 
   DREAMPLACE_DISPATCH_FLOATING_TYPES(
       pos, "computeWeightedAverageWirelengthCudaMergedLauncher", [&] {
-        if (net_weights.numel()) {
-          integrateNetWeightsCudaLauncher(
-              DREAMPLACE_TENSOR_DATA_PTR(pin2net_map, int),
-              DREAMPLACE_TENSOR_DATA_PTR(net_mask, unsigned char),
-              DREAMPLACE_TENSOR_DATA_PTR(net_weights, scalar_t),
-              DREAMPLACE_TENSOR_DATA_PTR(grad_out, scalar_t),
-              DREAMPLACE_TENSOR_DATA_PTR(grad_out, scalar_t) + num_pins,
-              num_pins);
-        }
+        scaleIntegrateNetWeightsAndMaskCudaLauncher(
+            DREAMPLACE_TENSOR_DATA_PTR(pin2net_map, int),
+            DREAMPLACE_TENSOR_DATA_PTR(net_mask, unsigned char),
+            DREAMPLACE_TENSOR_DATA_PTR(net_weights, scalar_t),
+            DREAMPLACE_TENSOR_DATA_PTR(grad_pos, scalar_t),
+            DREAMPLACE_TENSOR_DATA_PTR(pin_mask, bool),
+            DREAMPLACE_TENSOR_DATA_PTR(grad_out, scalar_t),
+            DREAMPLACE_TENSOR_DATA_PTR(grad_out, scalar_t) + num_pins,
+            num_pins, net_weights.numel() != 0);
       });
   return grad_out;
 }
