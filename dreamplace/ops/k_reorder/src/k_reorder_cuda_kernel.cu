@@ -421,21 +421,83 @@ struct ReduceMinOP {
   }
 };
 
-template <typename T, int ThreadsPerBlock = 32>
-__global__ void reduce_min_2d_cub(const T* __restrict__ costs,
-                                  int* best_permute_id, int m, int n) {
-  typedef cub::BlockReduce<ItemWithIndex<T>, ThreadsPerBlock> BlockReduce;
+template <typename DetailedPlaceDBType, typename StateType>
+inline __device__ void apply_reorder_instance(
+    DetailedPlaceDBType db, StateType state, int group_id,
+    int inst_id, int permute_id, int offset) {
+  typename DetailedPlaceDBType::type target_x[MAX_K];
+  typename DetailedPlaceDBType::type target_sizes[MAX_K];
+  int target_nodes[MAX_K];
 
+#ifdef DEBUG
+  // printf("inst[%d].permute_id = %d\n", inst_id, permute_id);
+  assert(permute_id < state.num_permutations);
+#endif
+  // this is a copy for adding offset
+  auto inst = state.reorder_instances(group_id, inst_id);
+  inst.idx_bgn += offset;
+  inst.idx_end =
+      min(inst.idx_end + offset, state.row2node_map.size(inst.row_id));
+  auto row2nodes = state.row2node_map(inst.row_id) + inst.idx_bgn;
+  auto permutation = state.permutations + permute_id * state.K;
+  int K = inst.idx_end - inst.idx_bgn;
+
+  // after adding offset
+  for (int idx = 0; idx < K; ++idx) {
+    int node_id = row2nodes[idx];
+    if (node_id >= db.num_movable_nodes ||
+        db.node_size_y[node_id] > db.row_height) {
+      inst.idx_end = inst.idx_bgn + idx;
+      K = idx;
+      break;
+    }
+  }
+
+  if (K > 0) {
+    compute_position(db, state, inst, permute_id, target_x, target_sizes);
+
+    for (int i = 0; i < K; ++i) {
+      int node_id = row2nodes[i];
+      target_nodes[i] = node_id;
+    }
+
+    for (int i = 0; i < K; ++i) {
+      int node_id = row2nodes[i];
+      typename DetailedPlaceDBType::type xx = target_x[permutation[i]];
+      if (db.x[node_id] != xx) {
+        atomicAdd(state.device_num_moved, 1);
+      }
+      db.x[node_id] = xx;
+    }
+
+    for (int i = 0; i < K; ++i) {
+      row2nodes[permutation[i]] = target_nodes[i];
+    }
+  }
+}
+
+template <
+    typename T,
+    int ThreadsPerBlock,
+    typename DetailedPlaceDBType,
+    typename StateType>
+__global__ void reduce_min_and_apply_reorder(
+    DetailedPlaceDBType db, StateType state, int group_id,
+    int group_size, int offset) {
+  typedef cub::BlockReduce<ItemWithIndex<T>, ThreadsPerBlock> BlockReduce;
   __shared__ typename BlockReduce::TempStorage temp_storage;
 
-  auto inst_costs = costs + blockIdx.x * n;
-  auto inst_best_permute_id = best_permute_id + blockIdx.x;
-
+  int inst_id = blockIdx.x;
+  if (inst_id >= group_size) {
+    return;
+  }
+  const T* inst_costs =
+      state.costs + inst_id * state.num_permutations;
   ItemWithIndex<T> thread_data;
-
   thread_data.value = DREAMPLACE_CUDA_NAMESPACE::numeric_limits<T>::max();
   thread_data.index = 0;
-  for (int col = threadIdx.x; col < n; col += ThreadsPerBlock) {
+  for (int col = threadIdx.x; col < state.num_permutations;
+       col += ThreadsPerBlock) {
     T cost = inst_costs[col];
     if (cost < thread_data.value) {
       thread_data.value = cost;
@@ -443,74 +505,14 @@ __global__ void reduce_min_2d_cub(const T* __restrict__ costs,
     }
   }
 
-  // Compute the block-wide minimum for thread 0.
   ItemWithIndex<T> aggregate =
-      BlockReduce(temp_storage).Reduce(thread_data, ReduceMinOP<T>(), n);
+      BlockReduce(temp_storage).Reduce(
+          thread_data, ReduceMinOP<T>(), state.num_permutations);
 
   if (threadIdx.x == 0) {
-    // printf("inst[%d] cost %g, permute_id %d\n", blockIdx.x, aggregate.value,
-    // aggregate.index);
-    *inst_best_permute_id = aggregate.index;
-  }
-}
-
-template <typename DetailedPlaceDBType, typename StateType>
-__global__ void apply_reorder(DetailedPlaceDBType db, StateType state,
-                              int group_id, int group_size, int offset) {
-
-  typename DetailedPlaceDBType::type target_x[MAX_K];
-  typename DetailedPlaceDBType::type target_sizes[MAX_K];
-  int target_nodes[MAX_K];
-
-  for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < group_size;
-       i += blockDim.x * gridDim.x) {
-    int inst_id = i;
-    int permute_id = state.best_permute_id[i];
-#ifdef DEBUG
-    // printf("inst[%d].permute_id = %d\n", inst_id, permute_id);
-    assert(permute_id < state.num_permutations);
-#endif
-    // this is a copy for adding offset
-    auto inst = state.reorder_instances(group_id, inst_id);
-    inst.idx_bgn += offset;
-    inst.idx_end =
-        min(inst.idx_end + offset, state.row2node_map.size(inst.row_id));
-    auto row2nodes = state.row2node_map(inst.row_id) + inst.idx_bgn;
-    auto permutation = state.permutations + permute_id * state.K;
-    int K = inst.idx_end - inst.idx_bgn;
-
-    // after adding offset
-    for (int idx = 0; idx < K; ++idx) {
-      int node_id = row2nodes[idx];
-      if (node_id >= db.num_movable_nodes ||
-          db.node_size_y[node_id] > db.row_height) {
-        inst.idx_end = inst.idx_bgn + idx;
-        K = idx;
-        break;
-      }
-    }
-
-    if (K > 0) {
-      compute_position(db, state, inst, permute_id, target_x, target_sizes);
-
-      for (int i = 0; i < K; ++i) {
-        int node_id = row2nodes[i];
-        target_nodes[i] = node_id;
-      }
-
-      for (int i = 0; i < K; ++i) {
-        int node_id = row2nodes[i];
-        typename DetailedPlaceDBType::type xx = target_x[permutation[i]];
-        if (db.x[node_id] != xx) {
-          atomicAdd(state.device_num_moved, 1);
-        }
-        db.x[node_id] = xx;
-      }
-
-      for (int i = 0; i < K; ++i) {
-        row2nodes[permutation[i]] = target_nodes[i];
-      }
-    }
+    state.best_permute_id[inst_id] = aggregate.index;
+    apply_reorder_instance(
+        db, state, group_id, inst_id, aggregate.index, offset);
   }
 }
 
@@ -1039,14 +1041,9 @@ void k_reorder(
         timer_start = TIMER::getGlobaltime();
 #endif
         // print_costs<<<1, 1>>>(state, group_id, offset);
-        reduce_min_2d_cub<T, 32>
-            <<<group_size, 32>>>(state.costs, state.best_permute_id, group_size,
-                                 state.num_permutations);
-        // print_best_permute_id<<<1, 1>>>(state, group_id, offset);
-        constexpr int apply_reorder_threads = 32;
-        apply_reorder<<<ceilDiv(group_size, apply_reorder_threads),
-                        apply_reorder_threads>>>(
-            db, state, group_id, group_size, offset);
+        reduce_min_and_apply_reorder<T, 32>
+            <<<group_size, 32>>>(
+                db, state, group_id, group_size, offset);
 #ifdef K_REORDER_PROFILE
         checkCUDA(cudaDeviceSynchronize());
         timer_stop = TIMER::getGlobaltime();
