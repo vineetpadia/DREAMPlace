@@ -8,7 +8,7 @@
 DREAMPLACE_BEGIN_NAMESPACE
 
 #define MAX_NODE_DEGREE 32
-constexpr int kCostMatrixRowsPerBlock = 2;
+constexpr int kCostMatrixRowsPerBlock = 8;
 constexpr int kPostprocessRowsPerBlock = 4;
 
 template <typename DetailedPlaceDBType, typename IndependentSetMatchingStateType>
@@ -53,6 +53,7 @@ __global__ void compute_cost_matrix_kernel(DetailedPlaceDBType db, IndependentSe
         target_y = db.y[pos_id];
         target_space = state.spaces[pos_id];
     }
+    int thread_max_cost = 0;
     int j_end = min(
         (blockIdx.x + 1) * kCostMatrixRowsPerBlock, state.set_size);
     for (int j = blockIdx.x * kCostMatrixRowsPerBlock; j < j_end; ++j)
@@ -210,11 +211,53 @@ __global__ void compute_cost_matrix_kernel(DetailedPlaceDBType db, IndependentSe
             //cost = state.large_number*(j != k); 
             cost = BIG_NEGATIVE; // as a marker for post processing
         }
+        thread_max_cost = max(thread_max_cost, cost);
     }
     if (j + 1 < j_end)
     {
         __syncthreads();
     }
+    }
+
+    int lane = threadIdx.x & 31;
+    int warp = threadIdx.x >> 5;
+    int warp_threads = min(32, (int)blockDim.x - warp*32);
+    unsigned int active_mask = __activemask();
+    for (int offset = 16; offset > 0; offset >>= 1)
+    {
+        int other_max =
+            __shfl_down_sync(active_mask, thread_max_cost, offset);
+        if (lane + offset < warp_threads)
+        {
+            thread_max_cost = max(thread_max_cost, other_max);
+        }
+    }
+
+    __shared__ int warp_max_costs[32];
+    if (lane == 0)
+    {
+        warp_max_costs[warp] = thread_max_cost;
+    }
+    __syncthreads();
+
+    if (warp == 0)
+    {
+        int num_warps = (blockDim.x + 31) >> 5;
+        int block_max_cost =
+            lane < num_warps ? warp_max_costs[lane] : 0;
+        for (int offset = 16; offset > 0; offset >>= 1)
+        {
+            int other_max =
+                __shfl_down_sync(active_mask, block_max_cost, offset);
+            if (lane + offset < num_warps)
+            {
+                block_max_cost = max(block_max_cost, other_max);
+            }
+        }
+        if (lane == 0)
+        {
+            atomicMax(state.max_costs + i, block_max_cost);
+        }
     }
 }
 
@@ -315,69 +358,6 @@ __global__ void check_cost_matrices_kernel(IndependentSetMatchingStateType state
     }
 }
 
-template <int Threads>
-__global__ void reduce_cost_matrix_max_kernel(
-        const int* __restrict__ cost_matrices,
-        int* __restrict__ max_costs,
-        int cost_matrix_size)
-{
-    int i = blockIdx.x;
-    const int* cost_matrix = cost_matrices + i*cost_matrix_size;
-    int max_cost = 0;
-    if (cost_matrix_size % 4 == 0)
-    {
-        const int4* cost_matrix4 =
-            reinterpret_cast<const int4*>(cost_matrix);
-        for (int j = threadIdx.x; j < cost_matrix_size / 4;
-                j += blockDim.x)
-        {
-            int4 costs = cost_matrix4[j];
-            max_cost = max(max_cost, costs.x);
-            max_cost = max(max_cost, costs.y);
-            max_cost = max(max_cost, costs.z);
-            max_cost = max(max_cost, costs.w);
-        }
-    }
-    else
-    {
-        for (int j = threadIdx.x; j < cost_matrix_size; j += blockDim.x)
-        {
-            max_cost = max(max_cost, cost_matrix[j]);
-        }
-    }
-
-    unsigned int active_mask = __activemask();
-    for (int offset = 16; offset > 0; offset >>= 1)
-    {
-        max_cost = max(
-            max_cost, __shfl_down_sync(active_mask, max_cost, offset));
-    }
-
-    __shared__ int warp_max_costs[Threads/32];
-    int lane = threadIdx.x & 31;
-    int warp = threadIdx.x >> 5;
-    if (lane == 0)
-    {
-        warp_max_costs[warp] = max_cost;
-    }
-    __syncthreads();
-
-    if (warp == 0)
-    {
-        max_cost = lane < Threads/32 ? warp_max_costs[lane] : 0;
-        for (int offset = 16; offset > 0; offset >>= 1)
-        {
-            max_cost = max(
-                max_cost,
-                __shfl_down_sync(0xFFFFFFFFu, max_cost, offset));
-        }
-        if (lane == 0)
-        {
-            max_costs[i] = max_cost;
-        }
-    }
-}
-
 template <typename DetailedPlaceDBType, typename IndependentSetMatchingStateType>
 void cost_matrix_construction(const DetailedPlaceDBType& db, IndependentSetMatchingStateType& state)
 {
@@ -387,16 +367,14 @@ void cost_matrix_construction(const DetailedPlaceDBType& db, IndependentSetMatch
     dim3 postprocess_grid(
         ceilDiv(state.set_size, kPostprocessRowsPerBlock),
         state.num_independent_sets, 1);
+    checkCUDA(cudaMemset(
+        state.max_costs, 0,
+        state.num_independent_sets *
+            sizeof(typename IndependentSetMatchingStateType::cost_type)));
     compute_cost_matrix_kernel<<<compute_grid, state.set_size>>>(db, state);
 #ifdef DEBUG
     //print_cost_matrix_kernel<<<1, 1>>>(state.cost_matrices + state.cost_matrix_size*3, state.set_size);
 #endif
-
-    constexpr int threads = 512;
-    reduce_cost_matrix_max_kernel<threads>
-        <<<state.num_independent_sets, threads>>>(
-            state.cost_matrices, state.max_costs,
-            state.cost_matrix_size);
 
     constexpr int postprocess_threads = 64;
     postprocess_cost_matrix_kernel<<<postprocess_grid, postprocess_threads>>>(
