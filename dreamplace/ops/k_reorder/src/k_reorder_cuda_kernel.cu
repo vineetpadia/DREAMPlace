@@ -416,13 +416,9 @@ __global__ void reduce_min_2d_cub(const T* __restrict__ costs,
     }
   }
 
-  __syncthreads();
-
-  // Compute the block-wide max for thread0
+  // Compute the block-wide minimum for thread 0.
   ItemWithIndex<T> aggregate =
       BlockReduce(temp_storage).Reduce(thread_data, ReduceMinOP<T>(), n);
-
-  __syncthreads();
 
   if (threadIdx.x == 0) {
     // printf("inst[%d] cost %g, permute_id %d\n", blockIdx.x, aggregate.value,
