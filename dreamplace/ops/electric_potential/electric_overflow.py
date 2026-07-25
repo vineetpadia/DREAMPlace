@@ -199,14 +199,14 @@ class ElectricOverflow(nn.Module):
             self.num_movable_impacted_bins_x = 0
             self.num_movable_impacted_bins_y = 0
         if self.num_filler_nodes:
-            self.num_filler_impacted_bins_x = (
-                (self.node_size_x[-self.num_filler_nodes:].max() +
-                 2 * sqrt2 * self.bin_size_x) /
-                self.bin_size_x).ceil().clamp(max=self.num_bins_x)
-            self.num_filler_impacted_bins_y = (
-                (self.node_size_y[-self.num_filler_nodes:].max() +
-                 2 * sqrt2 * self.bin_size_y) /
-                self.bin_size_y).ceil().clamp(max=self.num_bins_y)
+            self.num_filler_impacted_bins_x = int(
+                ((self.node_size_x[-self.num_filler_nodes:].max() +
+                  2 * sqrt2 * self.bin_size_x) /
+                 self.bin_size_x).ceil().clamp(max=self.num_bins_x))
+            self.num_filler_impacted_bins_y = int(
+                ((self.node_size_y[-self.num_filler_nodes:].max() +
+                  2 * sqrt2 * self.bin_size_y) /
+                 self.bin_size_y).ceil().clamp(max=self.num_bins_y))
         else:
             self.num_filler_impacted_bins_x = 0
             self.num_filler_impacted_bins_y = 0
