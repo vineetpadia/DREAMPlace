@@ -40,6 +40,8 @@ DREAMPLACE_BEGIN_NAMESPACE
 #define MAX_NUM_NETS_PER_NODE 20
 // maximum number of nets incident to cells per instance
 #define MAX_NUM_NETS_PER_INSTANCE (MAX_NUM_NETS_PER_NODE * MAX_K)
+// threads that cooperatively scan the pins of one instance-net
+constexpr int NET_BOX_SCAN_THREADS = 8;
 
 /// Concepts in the algorith:
 /// A group contains independent rows.
@@ -202,11 +204,17 @@ __global__ void compute_instance_net_boxes(DetailedPlaceDBType db,
                                            int instance_token_bgn) {
   typedef typename DetailedPlaceDBType::type T;
 
-  // Net boxes are independent; assign one thread to each instance-net
-  // instead of scanning every net of an instance serially.
+  int net_lane = threadIdx.x & (NET_BOX_SCAN_THREADS - 1);
+
+  // Net boxes are independent; assign a small thread group to each
+  // instance-net so its pins can be scanned cooperatively.
   int max_num_instance_nets = group_size * MAX_NUM_NETS_PER_INSTANCE;
-  for (int i = blockIdx.x * blockDim.x + threadIdx.x;
-       i < max_num_instance_nets; i += blockDim.x * gridDim.x) {
+  int num_thread_groups =
+      blockDim.x * gridDim.x / NET_BOX_SCAN_THREADS;
+  for (int i =
+           (blockIdx.x * blockDim.x + threadIdx.x) /
+           NET_BOX_SCAN_THREADS;
+       i < max_num_instance_nets; i += num_thread_groups) {
     int inst_id = i / MAX_NUM_NETS_PER_INSTANCE;
     int instance_net_id = i - inst_id * MAX_NUM_NETS_PER_INSTANCE;
     auto instance_nets_size = state.instance_nets_size[inst_id];
@@ -238,13 +246,15 @@ __global__ void compute_instance_net_boxes(DetailedPlaceDBType db,
       T segment_xh = db.x[row2nodes[K - 1]];
       T row_yl = db.yl + inst.row_id * db.row_height;
       auto& instance_net = state.instance_nets[i];
-      instance_net.bxl = db.xh;
-      instance_net.bxh = db.xl;
+      T bxl = db.xh;
+      T bxh = db.xl;
 
-      int net2pin_id = db.flat_net2pin_start_map[instance_net.net_id];
+      int net2pin_id =
+          db.flat_net2pin_start_map[instance_net.net_id] + net_lane;
       const int net2pin_id_end =
           db.flat_net2pin_start_map[instance_net.net_id + 1];
-      for (; net2pin_id < net2pin_id_end; ++net2pin_id) {
+      for (; net2pin_id < net2pin_id_end;
+           net2pin_id += NET_BOX_SCAN_THREADS) {
         int net_pin_id = db.flat_net2pin_map[net2pin_id];
         int other_node_id = db.pin2node_map[net_pin_id];
         if (other_node_id < db.num_nodes)  // other_node_id may exceed
@@ -274,10 +284,27 @@ __global__ void compute_instance_net_boxes(DetailedPlaceDBType db,
               }
             }
             other_node_xl += pin_offset_x;
-            instance_net.bxl = min(instance_net.bxl, other_node_xl);
-            instance_net.bxh = max(instance_net.bxh, other_node_xl);
+            bxl = min(bxl, other_node_xl);
+            bxh = max(bxh, other_node_xl);
           }
         }
+      }
+
+      unsigned int active_mask = __activemask();
+      for (int lane_offset = NET_BOX_SCAN_THREADS / 2; lane_offset > 0;
+           lane_offset >>= 1) {
+        T other_bxl = __shfl_down_sync(
+            active_mask, bxl, lane_offset, NET_BOX_SCAN_THREADS);
+        T other_bxh = __shfl_down_sync(
+            active_mask, bxh, lane_offset, NET_BOX_SCAN_THREADS);
+        if (net_lane < lane_offset) {
+          bxl = min(bxl, other_bxl);
+          bxh = max(bxh, other_bxh);
+        }
+      }
+      if (net_lane == 0) {
+        instance_net.bxl = bxl;
+        instance_net.bxh = bxh;
       }
     }
   }
@@ -962,9 +989,11 @@ void k_reorder(
             db, state, group_id, group_size);
         // print_instance_nets<<<1, 1>>>(state, group_id, offset);
         // check_instance_nets<<<1, 1>>>(db, state, group_id);
-        constexpr int net_box_threads = 64;
+        constexpr int net_box_threads = 128;
         compute_instance_net_boxes<<<
-            ceilDiv(group_size * MAX_NUM_NETS_PER_INSTANCE, net_box_threads),
+            ceilDiv(group_size * MAX_NUM_NETS_PER_INSTANCE *
+                        NET_BOX_SCAN_THREADS,
+                    net_box_threads),
             net_box_threads>>>(
             db, state, group_id, group_size, offset, instance_token_bgn);
         // print_instance_net_bboxes<<<1, 1>>>(state, group_id, offset);
