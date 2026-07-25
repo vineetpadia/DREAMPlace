@@ -583,6 +583,51 @@ __global__ void print_net_markers(DetailedPlaceDB<T> db,
   }
 }
 
+template <typename T>
+inline __device__ void unique_instance_nets_warp(
+    KReorderState<T> state, int inst_id, int lane_id,
+    int& instance_nets_size) {
+  constexpr int kWarpSize = 32;
+  constexpr unsigned kFullWarpMask = 0xffffffffU;
+  auto instance_nets =
+      state.instance_nets + inst_id * MAX_NUM_NETS_PER_INSTANCE;
+
+  for (int j = 0; j < instance_nets_size; ++j) {
+    int net_id = instance_nets[j].net_id;
+    for (int k = j + 1; k < instance_nets_size;) {
+      int candidate_id = k + lane_id;
+      unsigned duplicate_mask = __ballot_sync(
+          kFullWarpMask,
+          candidate_id < instance_nets_size &&
+              instance_nets[candidate_id].net_id == net_id);
+      if (duplicate_mask) {
+        int duplicate_id = k + __ffs(duplicate_mask) - 1;
+        // copy marker and pin offset
+        if (lane_id == 0) {
+          instance_nets[j].node_marker |=
+              instance_nets[duplicate_id].node_marker;
+          for (int l = 0; l < state.K; ++l) {
+            if ((instance_nets[duplicate_id].node_marker & (1 << l))) {
+              instance_nets[j].pin_offset_x[l] =
+                  instance_nets[duplicate_id].pin_offset_x[l];
+            }
+          }
+          --instance_nets_size;
+          host_device_swap(instance_nets[duplicate_id],
+                           instance_nets[instance_nets_size]);
+        }
+        instance_nets_size = __shfl_sync(
+            kFullWarpMask, instance_nets_size, 0);
+        __syncwarp(kFullWarpMask);
+        // Recheck the element swapped into the duplicate's slot.
+        k = duplicate_id;
+      } else {
+        k += kWarpSize;
+      }
+    }
+  }
+}
+
 #ifdef DETERMINISTIC
 /// @brief Collect information of nets belong to each instance.
 /// The net order is deterministic.
@@ -677,6 +722,9 @@ __global__ void compute_instance_nets(DetailedPlaceDB<T> db,
         break;
       }
     }
+    __syncwarp(kFullWarpMask);
+    unique_instance_nets_warp(
+        state, inst_id, lane_id, instance_nets_size);
     if (lane_id == 0) {
       state.instance_nets_size[inst_id] = instance_nets_size;
     }
@@ -731,51 +779,16 @@ __global__ void unique_instance_nets(DetailedPlaceDB<T> db,
                                      KReorderState<T> state, int group_id,
                                      int group_size) {
   constexpr int kWarpSize = 32;
-  constexpr unsigned kFullWarpMask = 0xffffffffU;
 
   int lane_id = threadIdx.x & (kWarpSize - 1);
   int warp_id =
       (blockIdx.x * blockDim.x + threadIdx.x) / kWarpSize;
   int num_warps = blockDim.x * gridDim.x / kWarpSize;
   for (int inst_id = warp_id; inst_id < group_size; inst_id += num_warps) {
-    auto instance_nets =
-        state.instance_nets + inst_id * MAX_NUM_NETS_PER_INSTANCE;
     int instance_nets_size = state.instance_nets_size[inst_id];
 
-    for (int j = 0; j < instance_nets_size; ++j) {
-      int net_id = instance_nets[j].net_id;
-      for (int k = j + 1; k < instance_nets_size;) {
-        int candidate_id = k + lane_id;
-        unsigned duplicate_mask = __ballot_sync(
-            kFullWarpMask,
-            candidate_id < instance_nets_size &&
-                instance_nets[candidate_id].net_id == net_id);
-        if (duplicate_mask) {
-          int duplicate_id = k + __ffs(duplicate_mask) - 1;
-          // copy marker and pin offset
-          if (lane_id == 0) {
-            instance_nets[j].node_marker |=
-                instance_nets[duplicate_id].node_marker;
-            for (int l = 0; l < state.K; ++l) {
-              if ((instance_nets[duplicate_id].node_marker & (1 << l))) {
-                instance_nets[j].pin_offset_x[l] =
-                    instance_nets[duplicate_id].pin_offset_x[l];
-              }
-            }
-            --instance_nets_size;
-            host_device_swap(instance_nets[duplicate_id],
-                             instance_nets[instance_nets_size]);
-          }
-          instance_nets_size = __shfl_sync(
-              kFullWarpMask, instance_nets_size, 0);
-          __syncwarp(kFullWarpMask);
-          // Recheck the element swapped into the duplicate's slot.
-          k = duplicate_id;
-        } else {
-          k += kWarpSize;
-        }
-      }
-    }
+    unique_instance_nets_warp(
+        state, inst_id, lane_id, instance_nets_size);
     if (lane_id == 0) {
       state.instance_nets_size[inst_id] = instance_nets_size;
     }
@@ -982,11 +995,13 @@ void k_reorder(
         compute_instance_nets<<<ceilDiv(db.num_nets, 256), 256>>>(db, state);
 #endif
         // print_instance_nets<<<1, 1>>>(state, group_id);
+#ifndef DETERMINISTIC
         constexpr int unique_net_threads = 64;
         unique_instance_nets<<<
             ceilDiv(group_size * 32, unique_net_threads),
             unique_net_threads>>>(
             db, state, group_id, group_size);
+#endif
         // print_instance_nets<<<1, 1>>>(state, group_id, offset);
         // check_instance_nets<<<1, 1>>>(db, state, group_id);
         constexpr int net_box_threads = 128;
