@@ -18,7 +18,8 @@ int computeElectricForceCudaLauncher(
     const T* offset_x_tensor, const T* offset_y_tensor, const T* ratio_tensor,
     const T* bin_center_x_tensor, const T* bin_center_y_tensor, T xl, T yl,
     T xh, T yh, T bin_size_x, T bin_size_y, int num_nodes, bool deterministic_flag, 
-    T* grad_x_tensor, T* grad_y_tensor, const int* sorted_node_map);
+    const T* grad_pos, T* grad_x_tensor, T* grad_y_tensor,
+    const int* sorted_node_map);
 
 /// @brief compute electric force for movable and filler cells
 /// @param grad_pos input gradient from backward propagation
@@ -73,6 +74,7 @@ at::Tensor electric_force(
 
   at::Tensor grad_out = at::zeros_like(pos);
   int num_nodes = pos.numel() / 2;
+  int num_physical_nodes = num_nodes - num_filler_nodes;
 
   DREAMPLACE_DISPATCH_FLOATING_TYPES(
       pos, "computeElectricForceCudaLauncher", [&] {
@@ -91,13 +93,13 @@ at::Tensor electric_force(
             DREAMPLACE_TENSOR_DATA_PTR(bin_center_x, scalar_t),
             DREAMPLACE_TENSOR_DATA_PTR(bin_center_y, scalar_t), xl, yl, xh, yh,
             bin_size_x, bin_size_y, num_movable_nodes, (bool)deterministic_flag,
+            DREAMPLACE_TENSOR_DATA_PTR(grad_pos, scalar_t),
             DREAMPLACE_TENSOR_DATA_PTR(grad_out, scalar_t),
             DREAMPLACE_TENSOR_DATA_PTR(grad_out, scalar_t) + num_nodes,
             DREAMPLACE_TENSOR_DATA_PTR(sorted_node_map, int));
       });
 
   if (num_filler_nodes) {
-    int num_physical_nodes = num_nodes - num_filler_nodes;
     DREAMPLACE_DISPATCH_FLOATING_TYPES(
         pos, "computeElectricForceCudaLauncher", [&] {
           computeElectricForceCudaLauncher<scalar_t>(
@@ -115,13 +117,14 @@ at::Tensor electric_force(
               DREAMPLACE_TENSOR_DATA_PTR(bin_center_x, scalar_t),
               DREAMPLACE_TENSOR_DATA_PTR(bin_center_y, scalar_t), xl, yl, xh,
               yh, bin_size_x, bin_size_y, num_filler_nodes, (bool)deterministic_flag,
+              DREAMPLACE_TENSOR_DATA_PTR(grad_pos, scalar_t),
               DREAMPLACE_TENSOR_DATA_PTR(grad_out, scalar_t) + num_physical_nodes,
               DREAMPLACE_TENSOR_DATA_PTR(grad_out, scalar_t) + num_nodes + num_physical_nodes,
               NULL);
         });
   }
 
-  return grad_out.mul_(grad_pos);
+  return grad_out;
 }
 
 DREAMPLACE_END_NAMESPACE

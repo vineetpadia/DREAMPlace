@@ -26,7 +26,8 @@ __global__ void __launch_bounds__(1024, 8) computeElectricForce(
     const T *bin_center_x_tensor, const T *bin_center_y_tensor, T xl, T yl,
     T xh, T yh, const T half_bin_size_x, const T half_bin_size_y,
     const T bin_size_x, const T bin_size_y, const T inv_bin_size_x,
-    const T inv_bin_size_y, int num_nodes, T *grad_x_tensor, T *grad_y_tensor,
+    const T inv_bin_size_y, int num_nodes, const T *grad_pos,
+    T *grad_x_tensor, T *grad_y_tensor,
     const int *sorted_node_map  ///< can be NULL if not sorted
 ) {
   int index = blockIdx.x * blockDim.z + threadIdx.z;
@@ -91,8 +92,8 @@ __global__ void __launch_bounds__(1024, 8) computeElectricForce(
     __syncthreads();
 
     if (threadIdx.x == 0 && threadIdx.y == 0) {
-      grad_x_tensor[i] = s_x[threadIdx.z];
-      grad_y_tensor[i] = s_y[threadIdx.z];
+      grad_x_tensor[i] = s_x[threadIdx.z] * grad_pos[0];
+      grad_y_tensor[i] = s_y[threadIdx.z] * grad_pos[0];
     }
   }
 }
@@ -356,8 +357,8 @@ __global__ void computeElectricForceSimpleLikeCPU(
     const T *node_size_x_clamped_tensor, const T *node_size_y_clamped_tensor,
     const T *offset_x_tensor, const T *offset_y_tensor, const T *ratio_tensor,
     const T *bin_center_x_tensor, const T *bin_center_y_tensor, T xl, T yl,
-    T xh, T yh, T bin_size_x, T bin_size_y, int num_nodes, T *grad_x_tensor,
-    T *grad_y_tensor) {
+    T xh, T yh, T bin_size_x, T bin_size_y, int num_nodes,
+    const T *grad_pos, T *grad_x_tensor, T *grad_y_tensor) {
   // density_map_tensor should be initialized outside
 
   T inv_bin_size_x = 1.0 / bin_size_x;
@@ -406,8 +407,8 @@ __global__ void computeElectricForceSimpleLikeCPU(
         gy += area * field_map_y_tensor[idx];
       }
     }
-    grad_x_tensor[i] = gx * ratio;
-    grad_y_tensor[i] = gy * ratio;
+    grad_x_tensor[i] = (gx * ratio) * grad_pos[0];
+    grad_y_tensor[i] = (gy * ratio) * grad_pos[0];
   }
 }
 
@@ -420,7 +421,8 @@ int computeElectricForceCudaLauncher(
     const T *offset_x_tensor, const T *offset_y_tensor, const T *ratio_tensor,
     const T *bin_center_x_tensor, const T *bin_center_y_tensor, T xl, T yl,
     T xh, T yh, T bin_size_x, T bin_size_y, int num_nodes, bool deterministic_flag, 
-    T *grad_x_tensor, T *grad_y_tensor, const int *sorted_node_map) {
+    const T *grad_pos, T *grad_x_tensor, T *grad_y_tensor,
+    const int *sorted_node_map) {
   int thread_count = 64;
   int block_count_nodes = ceilDiv(num_nodes, thread_count);
 
@@ -437,6 +439,7 @@ int computeElectricForceCudaLauncher(
         xl, yl, xh, yh,
         bin_size_x, bin_size_y,
         num_nodes,
+        grad_pos,
         grad_x_tensor, grad_y_tensor);
   } else {
     dim3 blockSize(2, 2, thread_count);
@@ -447,7 +450,7 @@ int computeElectricForceCudaLauncher(
         offset_x_tensor, offset_y_tensor, ratio_tensor, bin_center_x_tensor,
         bin_center_y_tensor, xl, yl, xh, yh, bin_size_x / 2, bin_size_y / 2,
         bin_size_x, bin_size_y, 1 / bin_size_x, 1 / bin_size_y, num_nodes,
-        grad_x_tensor, grad_y_tensor, sorted_node_map);
+        grad_pos, grad_x_tensor, grad_y_tensor, sorted_node_map);
   }
 
   return 0;
@@ -463,7 +466,8 @@ int computeElectricForceCudaLauncher(
       const T *offset_y_tensor, const T *ratio_tensor,                         \
       const T *bin_center_x_tensor, const T *bin_center_y_tensor, T xl, T yl,  \
       T xh, T yh, T bin_size_x, T bin_size_y, int num_nodes, bool deterministic_flag, \
-      T *grad_x_tensor, T *grad_y_tensor, const int *sorted_node_map); 
+      const T *grad_pos, T *grad_x_tensor, T *grad_y_tensor,                   \
+      const int *sorted_node_map);
 
 REGISTER_KERNEL_LAUNCHER(float);
 REGISTER_KERNEL_LAUNCHER(double);
