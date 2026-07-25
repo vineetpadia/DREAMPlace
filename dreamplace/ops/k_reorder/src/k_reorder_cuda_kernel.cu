@@ -198,14 +198,9 @@ inline __device__ typename DetailedPlaceDBType::type compute_instance_hpwl(
 template <typename DetailedPlaceDBType, typename StateType>
 __global__ void compute_instance_net_boxes(DetailedPlaceDBType db,
                                            StateType state, int group_id,
-                                           int offset,
+                                           int group_size, int offset,
                                            int instance_token_bgn) {
   typedef typename DetailedPlaceDBType::type T;
-  __shared__ int group_size;
-  if (threadIdx.x == 0) {
-    group_size = state.reorder_instances.size(group_id);
-  }
-  __syncthreads();
 
   // Net boxes are independent; assign one thread to each instance-net
   // instead of scanning every net of an instance serially.
@@ -290,15 +285,10 @@ __global__ void compute_instance_net_boxes(DetailedPlaceDBType db,
 
 template <typename DetailedPlaceDBType, typename StateType>
 __global__ void compute_reorder_hpwl(DetailedPlaceDBType db, StateType state,
-                                     int group_id, int offset) {
+                                     int group_id,
+                                     int group_size_with_permutation,
+                                     int offset) {
   typedef typename DetailedPlaceDBType::type T;
-  __shared__ int group_size;
-  __shared__ int group_size_with_permutation;
-  if (threadIdx.x == 0) {
-    group_size = state.reorder_instances.size(group_id);
-    group_size_with_permutation = group_size * state.num_permutations;
-  }
-  __syncthreads();
 
   typename DetailedPlaceDBType::type target_x[MAX_K];
   typename DetailedPlaceDBType::type target_sizes[MAX_K];
@@ -443,12 +433,7 @@ __global__ void reduce_min_2d_cub(const T* __restrict__ costs,
 
 template <typename DetailedPlaceDBType, typename StateType>
 __global__ void apply_reorder(DetailedPlaceDBType db, StateType state,
-                              int group_id, int offset) {
-  __shared__ int group_size;
-  if (threadIdx.x == 0) {
-    group_size = state.reorder_instances.size(group_id);
-  }
-  __syncthreads();
+                              int group_id, int group_size, int offset) {
 
   typename DetailedPlaceDBType::type target_x[MAX_K];
   typename DetailedPlaceDBType::type target_sizes[MAX_K];
@@ -517,13 +502,8 @@ __global__ void apply_reorder(DetailedPlaceDBType db, StateType state,
 template <typename T>
 __global__ void compute_node2inst_map(DetailedPlaceDB<T> db,
                                       KReorderState<T> state, int group_id,
-                                      int offset,
+                                      int group_size, int offset,
                                       int instance_token_bgn) {
-  __shared__ int group_size;
-  if (threadIdx.x == 0) {
-    group_size = state.reorder_instances.size(group_id);
-  }
-  __syncthreads();
 
   for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < group_size;
        i += blockDim.x * gridDim.x) {
@@ -586,14 +566,9 @@ __global__ void print_net_markers(DetailedPlaceDB<T> db,
 template <typename T>
 __global__ void compute_instance_nets(DetailedPlaceDB<T> db,
                                       KReorderState<T> state, int group_id,
-                                      int offset) {
+                                      int group_size, int offset) {
   constexpr int kWarpSize = 32;
   constexpr unsigned kFullWarpMask = 0xffffffffU;
-  __shared__ int group_size;
-  if (threadIdx.x == 0) {
-    group_size = state.reorder_instances.size(group_id);
-  }
-  __syncthreads();
 
   int lane_id = threadIdx.x & (kWarpSize - 1);
   int warp_id =
@@ -714,14 +689,10 @@ __global__ void compute_instance_nets(DetailedPlaceDB<T> db,
 /// @brief Remove duplicate nets in an instance.
 template <typename T>
 __global__ void unique_instance_nets(DetailedPlaceDB<T> db,
-                                     KReorderState<T> state, int group_id) {
+                                     KReorderState<T> state, int group_id,
+                                     int group_size) {
   constexpr int kWarpSize = 32;
   constexpr unsigned kFullWarpMask = 0xffffffffU;
-  __shared__ int group_size;
-  if (threadIdx.x == 0) {
-    group_size = state.reorder_instances.size(group_id);
-  }
-  __syncthreads();
 
   int lane_id = threadIdx.x & (kWarpSize - 1);
   int warp_id =
@@ -957,7 +928,7 @@ void k_reorder(
         reset_state<<<64, 512>>>(db, state);
 #endif
         compute_node2inst_map<<<ceilDiv(group_size, 256), 256>>>(
-            db, state, group_id, offset, instance_token_bgn);
+            db, state, group_id, group_size, offset, instance_token_bgn);
 #ifndef DETERMINISTIC
         compute_net_markers<<<ceilDiv(db.num_movable_nodes, 256), 256>>>(db,
                                                                          state);
@@ -965,22 +936,22 @@ void k_reorder(
         // print_net_markers<<<1, 1>>>(db, state);
 #ifdef DETERMINISTIC
         compute_instance_nets<<<ceilDiv(group_size * 32, 256), 256>>>(
-            db, state, group_id, offset);
+            db, state, group_id, group_size, offset);
 #else
         compute_instance_nets<<<ceilDiv(db.num_nets, 256), 256>>>(db, state);
 #endif
         // print_instance_nets<<<1, 1>>>(state, group_id);
         unique_instance_nets<<<ceilDiv(group_size * 32, 256), 256>>>(
-            db, state, group_id);
+            db, state, group_id, group_size);
         // print_instance_nets<<<1, 1>>>(state, group_id, offset);
         // check_instance_nets<<<1, 1>>>(db, state, group_id);
         compute_instance_net_boxes<<<
             ceilDiv(group_size * MAX_NUM_NETS_PER_INSTANCE, 256), 256>>>(
-            db, state, group_id, offset, instance_token_bgn);
+            db, state, group_id, group_size, offset, instance_token_bgn);
         // print_instance_net_bboxes<<<1, 1>>>(state, group_id, offset);
         compute_reorder_hpwl<<<
             ceilDiv(group_size * state.num_permutations, 256), 256>>>(
-            db, state, group_id, offset);
+            db, state, group_id, group_size * state.num_permutations, offset);
 #ifdef K_REORDER_PROFILE
         checkCUDA(cudaDeviceSynchronize());
         timer_stop = TIMER::getGlobaltime();
@@ -996,8 +967,8 @@ void k_reorder(
             <<<group_size, 32>>>(state.costs, state.best_permute_id, group_size,
                                  state.num_permutations);
         // print_best_permute_id<<<1, 1>>>(state, group_id, offset);
-        apply_reorder<<<ceilDiv(group_size, 256), 256>>>(db, state, group_id,
-                                                         offset);
+        apply_reorder<<<ceilDiv(group_size, 256), 256>>>(
+            db, state, group_id, group_size, offset);
 #ifdef K_REORDER_PROFILE
         checkCUDA(cudaDeviceSynchronize());
         timer_stop = TIMER::getGlobaltime();
