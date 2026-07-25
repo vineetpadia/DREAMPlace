@@ -23,7 +23,8 @@ int computeTriangleDensityMapCudaLauncher(
     const T bin_size_x, const T bin_size_y, bool deterministic_flag,
     T* density_map_tensor, const T* density_map_input_tensor,
     const int* sorted_node_map,
-    unsigned long long int* deterministic_workspace);
+    unsigned long long int* deterministic_workspace,
+    bool requantize_workspace, bool finalize_output);
 
 // The exact density model
 // Compute the exact overlap area for density
@@ -133,7 +134,7 @@ at::Tensor density_map(
             DREAMPLACE_TENSOR_DATA_PTR(density_map, scalar_t),
             DREAMPLACE_TENSOR_DATA_PTR(initial_density_map, scalar_t),
             DREAMPLACE_TENSOR_DATA_PTR(sorted_node_map, int),
-            deterministic_workspace_ptr);
+            deterministic_workspace_ptr, false, !num_filler_nodes);
       });
   }
 
@@ -164,7 +165,7 @@ at::Tensor density_map(
                   ? DREAMPLACE_TENSOR_DATA_PTR(density_map, scalar_t)
                   : DREAMPLACE_TENSOR_DATA_PTR(initial_density_map, scalar_t),
               NULL,
-              deterministic_workspace_ptr);
+              deterministic_workspace_ptr, (bool)num_movable_nodes, true);
         });
   }
 

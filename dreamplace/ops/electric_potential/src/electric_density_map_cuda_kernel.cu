@@ -444,6 +444,28 @@ int computeTriangleDensityMapCallKernel(
   return 0;
 }
 
+__device__ __forceinline__ float multiplyRound(float lhs, float rhs) {
+  return __fmul_rn(lhs, rhs);
+}
+
+__device__ __forceinline__ double multiplyRound(double lhs, double rhs) {
+  return __dmul_rn(lhs, rhs);
+}
+
+template <typename T>
+__global__ void requantizeDensityMap(
+    unsigned long long int *scaled_density_map_tensor,
+    const unsigned long long int scale_factor, const T inv_scale_factor,
+    const int num_bins) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < num_bins) {
+    T density = multiplyRound(
+        static_cast<T>(scaled_density_map_tensor[i]), inv_scale_factor);
+    scaled_density_map_tensor[i] = static_cast<unsigned long long int>(
+        multiplyRound(density, static_cast<T>(scale_factor)));
+  }
+}
+
 template <typename T>
 int computeTriangleDensityMapCudaLauncher(
     const T *x_tensor, const T *y_tensor, const T *node_size_x_clamped_tensor,
@@ -455,7 +477,8 @@ int computeTriangleDensityMapCudaLauncher(
     const T bin_size_x, const T bin_size_y, bool deterministic_flag,
     T *density_map_tensor, const T *density_map_input_tensor,
     const int *sorted_node_map,
-    unsigned long long int *deterministic_workspace) {
+    unsigned long long int *deterministic_workspace,
+    bool requantize_workspace, bool finalize_output) {
   if (deterministic_flag)  // deterministic implementation using unsigned long
                            // as fixed point number
   {
@@ -476,10 +499,20 @@ int computeTriangleDensityMapCudaLauncher(
     AtomicAddCUDA<unsigned long long int> atomic_add_op(scale_factor);
 
     int thread_count = 512;
-    copyScaleArray<<<(num_bins + thread_count - 1) / thread_count,
-                     thread_count, 0, DREAMPLACE_STREAM>>>(
-        scaled_density_map_tensor, density_map_input_tensor, scale_factor,
-        num_bins);
+    if (requantize_workspace) {
+      // The separate movable/filler calls historically rounded through a
+      // floating-point density map between passes.  Reproduce that exact
+      // float -> fixed-point boundary without writing and rereading the map.
+      requantizeDensityMap<<<(num_bins + thread_count - 1) / thread_count,
+                             thread_count, 0, DREAMPLACE_STREAM>>>(
+          scaled_density_map_tensor, scale_factor, T(1.0 / scale_factor),
+          num_bins);
+    } else {
+      copyScaleArray<<<(num_bins + thread_count - 1) / thread_count,
+                       thread_count, 0, DREAMPLACE_STREAM>>>(
+          scaled_density_map_tensor, density_map_input_tensor, scale_factor,
+          num_bins);
+    }
     computeTriangleDensityMapCallKernel<T, decltype(atomic_add_op)>(
         x_tensor, y_tensor, node_size_x_clamped_tensor,
         node_size_y_clamped_tensor, offset_x_tensor, offset_y_tensor,
@@ -487,10 +520,12 @@ int computeTriangleDensityMapCudaLauncher(
         num_bins_x, num_bins_y, num_impacted_bins_x, num_impacted_bins_y, xl,
         yl, xh, yh, bin_size_x, bin_size_y, atomic_add_op,
         scaled_density_map_tensor, sorted_node_map);
-    copyScaleArray<<<(num_bins + thread_count - 1) / thread_count,
-                     thread_count, 0, DREAMPLACE_STREAM>>>(density_map_tensor,
-                                     scaled_density_map_tensor,
-                                     T(1.0 / scale_factor), num_bins);
+    if (finalize_output) {
+      copyScaleArray<<<(num_bins + thread_count - 1) / thread_count,
+                       thread_count, 0, DREAMPLACE_STREAM>>>(
+          density_map_tensor, scaled_density_map_tensor,
+          T(1.0 / scale_factor), num_bins);
+    }
 
     if (owns_workspace) {
       destroyCUDA(scaled_density_map_tensor);
@@ -604,7 +639,8 @@ int computeExactDensityMapCudaLauncher(
       const T xl, const T yl, const T xh, const T yh, const T bin_size_x,      \
       const T bin_size_y, bool deterministic_flag, T *density_map_tensor,      \
       const T *density_map_input_tensor, const int *sorted_node_map,            \
-      unsigned long long int *deterministic_workspace);                         \
+      unsigned long long int *deterministic_workspace,                          \
+      bool requantize_workspace, bool finalize_output);                         \
                                                                                \
   template int computeExactDensityMapCudaLauncher<T>(                          \
       const T *x_tensor, const T *y_tensor, const T *node_size_x_tensor,       \
