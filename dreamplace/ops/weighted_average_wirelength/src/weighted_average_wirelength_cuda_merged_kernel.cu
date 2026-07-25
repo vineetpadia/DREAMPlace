@@ -20,6 +20,8 @@ __global__ void computeWeightedAverageWirelength(
     const unsigned char *net_mask,
     int num_nets,
     const T *inv_gamma,
+    const T *net_weights,
+    bool has_net_weights,
     T *partial_wl,
     T *grad_intermediate_x, T *grad_intermediate_y)
 {
@@ -66,7 +68,13 @@ __global__ void computeWeightedAverageWirelength(
             exp_nx_sum += exp_nx;
         }
 
-        partial_wl[i] = xexp_x_sum / exp_x_sum - xexp_nx_sum / exp_nx_sum;
+        T wirelength =
+            xexp_x_sum / exp_x_sum - xexp_nx_sum / exp_nx_sum;
+        if (has_net_weights)
+        {
+            wirelength *= net_weights[ii];
+        }
+        partial_wl[i] = wirelength;
 
         T b_x = (*inv_gamma) / (exp_x_sum);
         T a_x = (1.0 - b_x * xexp_x_sum) / exp_x_sum;
@@ -82,6 +90,10 @@ __global__ void computeWeightedAverageWirelength(
             grads[flat_netpin[j]] = (a_x + b_x * xx) * exp_x - (a_nx + b_nx * xx) * exp_nx;
         }
     }
+    else if (ii < num_nets)
+    {
+        partial_wl[i] = 0;
+    }
 }
 
 template <typename T>
@@ -92,6 +104,8 @@ int computeWeightedAverageWirelengthCudaMergedLauncher(
     const unsigned char *net_mask,
     int num_nets,
     const T *inv_gamma,
+    const T *net_weights,
+    bool has_net_weights,
     T *partial_wl,
     T *grad_intermediate_x, T *grad_intermediate_y)
 {
@@ -105,6 +119,8 @@ int computeWeightedAverageWirelengthCudaMergedLauncher(
         net_mask,
         num_nets,
         inv_gamma,
+        net_weights,
+        has_net_weights,
         partial_wl,
         grad_intermediate_x, grad_intermediate_y);
 
@@ -119,6 +135,8 @@ int computeWeightedAverageWirelengthCudaMergedLauncher(
         const unsigned char *net_mask,                                 \
         int num_nets,                                                  \
         const T *inv_gamma,                                            \
+        const T *net_weights,                                          \
+        bool has_net_weights,                                          \
         T *partial_wl,                                                 \
         T *grad_intermediate_x, T *grad_intermediate_y);
 

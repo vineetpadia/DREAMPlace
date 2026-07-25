@@ -36,7 +36,8 @@ template <typename T>
 int computeWeightedAverageWirelengthCudaMergedLauncher(
     const T* x, const T* y, const int* flat_netpin, const int* netpin_start,
     const unsigned char* net_mask, int num_nets, const T* inv_gamma,
-    T* partial_wl, T* grad_intermediate_x, T* grad_intermediate_y);
+    const T* net_weights, bool has_net_weights, T* partial_wl,
+    T* grad_intermediate_x, T* grad_intermediate_y);
 
 template <typename T>
 void scaleIntegrateNetWeightsAndMaskCudaLauncher(
@@ -81,7 +82,7 @@ std::vector<at::Tensor> weighted_average_wirelength_forward(
   int num_pins = pos.numel() / 2;
 
   // x, y interleave
-  at::Tensor partial_wl = at::zeros({num_nets, 2}, pos.options());
+  at::Tensor partial_wl = at::empty({num_nets, 2}, pos.options());
   // timed with grad_in yet
   at::Tensor grad_intermediate = at::zeros_like(pos);
 
@@ -94,12 +95,11 @@ std::vector<at::Tensor> weighted_average_wirelength_forward(
             DREAMPLACE_TENSOR_DATA_PTR(netpin_start, int),
             DREAMPLACE_TENSOR_DATA_PTR(net_mask, unsigned char), num_nets,
             DREAMPLACE_TENSOR_DATA_PTR(inv_gamma, scalar_t),
+            DREAMPLACE_TENSOR_DATA_PTR(net_weights, scalar_t),
+            net_weights.numel() != 0,
             DREAMPLACE_TENSOR_DATA_PTR(partial_wl, scalar_t),
             DREAMPLACE_TENSOR_DATA_PTR(grad_intermediate, scalar_t),
             DREAMPLACE_TENSOR_DATA_PTR(grad_intermediate, scalar_t) + num_pins);
-        if (net_weights.numel()) {
-          partial_wl.mul_(net_weights.view({num_nets, 1}));
-        }
       });
 
   auto wl = partial_wl.sum();
